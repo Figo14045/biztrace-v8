@@ -988,7 +988,23 @@ async function sbQuery(params, select, page = 1) {
   const r = await fetch(url, {
     headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${from}-${to}`, 'Prefer': 'count=exact' }
   });
+
+  // Surface HTTP errors instead of swallowing them
+  if (!r.ok) {
+    let errBody = '';
+    try { errBody = await r.text(); } catch {}
+    console.error('Supabase query failed', r.status, errBody, 'URL:', url);
+    throw new Error(`Supabase returned ${r.status}. ${errBody.slice(0, 200)}`);
+  }
+
   const data = await r.json();
+
+  // Defensive: if Supabase returns an error object instead of an array
+  if (!Array.isArray(data)) {
+    console.error('Supabase returned non-array response:', data, 'URL:', url);
+    throw new Error(`Unexpected response: ${JSON.stringify(data).slice(0, 200)}`);
+  }
+
   const count = parseInt(r.headers.get('Content-Range')?.split('/')[1] ?? '0');
   return { data, count };
 }
@@ -1081,8 +1097,8 @@ function buildParams() {
     p['company_type_description'] = `in.(${ctypeVals.map(s => `"${s}"`).join(',')})`;
   }
 
-  // Sort
-  p['order'] = `${sortCol}.${sortAsc ? 'asc' : 'desc'}.nulls.last`;
+  // Sort — PostgREST syntax is `col.dir.nullslast` (no dot between nulls and last)
+  p['order'] = `${sortCol}.${sortAsc ? 'asc' : 'desc'}.nullslast`;
 
   return p;
 }
