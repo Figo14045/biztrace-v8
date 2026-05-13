@@ -40,7 +40,7 @@ exports.handler = async function(event) {
     hl:      'en',
     num:     '10',
     api_key: apiKey,
-    engine:  'google_light'
+    engine:  'google'
   });
 
   const url = `https://serpapi.com/search.json?${sp.toString()}`;
