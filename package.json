@@ -1,0 +1,8 @@
+{
+  "name": "sg-biztrace-v6",
+  "version": "6.0.0",
+  "description": "SG BizTrace V6 - ACRA registry lookup + SerpAPI contact enrichment",
+  "engines": {
+    "node": "18"
+  }
+}

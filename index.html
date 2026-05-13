@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BizTrace V7 — ACRA Lead Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:         #0f1117;
+  --surface:    #181c27;
+  --surface2:   #1e2333;
+  --border:     #2a3045;
+  --border2:    #3a4460;
+  --accent:     #3b82f6;
+  --accent2:    #60a5fa;
+  --green:      #22c55e;
+  --amber:      #f59e0b;
+  --red:        #ef4444;
+  --purple:     #a855f7;
+  --text:       #e2e8f0;
+  --text2:      #94a3b8;
+  --text3:      #64748b;
+  --mono:       'IBM Plex Mono', monospace;
+  --sans:       'IBM Plex Sans', sans-serif;
+  --radius:     6px;
+  --sidebar:    300px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+#header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#header h1 {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent2);
+  letter-spacing: 0.05em;
+}
+#header .pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--accent);
+  color: white;
+  letter-spacing: 0.05em;
+}
+#header .spacer { flex: 1; }
+#total-badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+}
+#total-badge span { color: var(--accent2); font-weight: 600; }
+
+/* ── Layout ── */
+#layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+#sidebar {
+  width: var(--sidebar);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+#sidebar-header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+#sidebar-header span {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+#clear-filters-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--red);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+}
+#clear-filters-btn:hover { background: rgba(239,68,68,0.1); }
+
+#sidebar-body {
+  flex: 1;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0; /* critical — allows flex child to shrink and scroll */
+}
+#sidebar-body::-webkit-scrollbar { width: 4px; }
+#sidebar-body::-webkit-scrollbar-track { background: transparent; }
+#sidebar-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* Filter groups */
+.filter-group {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+.filter-group.collapsed {
+  border-color: var(--border);
+  background: var(--bg);
+}
+.filter-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 36px;
+}
+.filter-group-header:hover { background: rgba(255,255,255,0.03); }
+.filter-group.collapsed .filter-group-header { opacity: 0.7; }
+.filter-group.collapsed .filter-group-header:hover { opacity: 1; }
+
+.filter-group-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.filter-group-chevron {
+  font-size: 9px;
+  color: var(--text3);
+  transition: transform 0.2s;
+  width: 14px;
+  text-align: center;
+}
+.filter-group.collapsed .filter-group-chevron {
+  transform: rotate(-90deg);
+  color: var(--text3);
+}
+.filter-group-body {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: slideDown 0.15s ease;
+}
+.filter-group.collapsed .filter-group-body { display: none; }
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Filter inputs */
+.filter-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.filter-input:focus { border-color: var(--accent); }
+.filter-input::placeholder { color: var(--text3); }
+
+.filter-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.filter-row label {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--mono);
+  white-space: nowrap;
+  min-width: 28px;
+}
+
+.multi-select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 120px;
+  overflow-y: auto;
+}
+.multi-select::-webkit-scrollbar { width: 3px; }
+.multi-select::-webkit-scrollbar-thumb { background: var(--border2); }
+.multi-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.multi-option:hover { background: rgba(59,130,246,0.1); }
+.multi-option input[type=checkbox] { accent-color: var(--accent); width: 12px; height: 12px; }
+.multi-option label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+.toggle-row label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text2);
+}
+.toggle {
+  position: relative;
+  width: 32px;
+  height: 18px;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border2);
+  border-radius: 99px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle-slider:before {
+  content: '';
+  position: absolute;
+  width: 12px; height: 12px;
+  left: 3px; top: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.toggle input:checked + .toggle-slider { background: var(--accent); }
+.toggle input:checked + .toggle-slider:before { transform: translateX(14px); }
+
+.apply-btn {
+  width: 100%;
+  padding: 9px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+.apply-btn:hover { background: var(--accent2); }
+
+/* Serp key input */
+#serp-section {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+#serp-section label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  display: block;
+  margin-bottom: 5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── Main ── */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Toolbar */
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#result-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+}
+#result-count strong { color: var(--text); }
+.toolbar-spacer { flex: 1; }
+#selected-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent2);
+  display: none;
+}
+
+.tb-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text2);
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tb-btn:hover { border-color: var(--accent); color: var(--accent2); }
+.tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tb-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.tb-btn.primary:hover { background: var(--accent2); border-color: var(--accent2); }
+.tb-btn.primary:disabled { background: var(--border2); border-color: var(--border2); }
+
+/* Table area */
+#table-wrap {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+#table-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+#table-wrap::-webkit-scrollbar-track { background: var(--bg); }
+#table-wrap::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+#data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 1200px;
+}
+#data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border2);
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  z-index: 10;
+}
+#data-table thead th:hover { color: var(--text2); }
+#data-table thead th.sorted { color: var(--accent2); }
+#data-table thead th:first-child { width: 36px; cursor: default; }
+
+#data-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+#data-table tbody tr:hover { background: rgba(59,130,246,0.05); }
+#data-table tbody tr.selected { background: rgba(59,130,246,0.1); }
+#data-table tbody td {
+  padding: 7px 12px;
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+#data-table tbody td:first-child { width: 36px; }
+#data-table tbody td.uen-col { color: var(--text3); font-size: 11px; }
+#data-table tbody td.name-col { color: var(--text); font-weight: 500; max-width: 260px; }
+#data-table tbody td.addr-col { color: var(--text3); }
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.badge-live    { background: rgba(34,197,94,0.15);  color: var(--green);  border: 1px solid rgba(34,197,94,0.3); }
+.badge-warn    { background: rgba(245,158,11,0.15); color: var(--amber);  border: 1px solid rgba(245,158,11,0.3); }
+.badge-liq     { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); }
+.badge-audit   { background: rgba(168,85,247,0.15); color: var(--purple); border: 1px solid rgba(168,85,247,0.3); }
+.badge-verify  { background: rgba(34,197,94,0.15);  color: var(--green);  border: 1px solid rgba(34,197,94,0.3); font-size:9px; }
+.badge-likely  { background: rgba(245,158,11,0.15); color: var(--amber);  border: 1px solid rgba(245,158,11,0.3); font-size:9px; }
+.badge-unver   { background: rgba(100,116,139,0.15);color: var(--text3);  border: 1px solid rgba(100,116,139,0.3);font-size:9px; }
+.badge-wrong   { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); font-size:9px; }
+
+/* Pagination */
+#pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.page-btn {
+  padding: 4px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent2); }
+.page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.page-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+#page-info {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+}
+
+/* State overlays */
+#state-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+}
+#state-overlay .state-icon { font-size: 32px; }
+#state-overlay .state-text {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text3);
+}
+#state-overlay .state-sub {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text3);
+  max-width: 300px;
+  text-align: center;
+  line-height: 1.6;
+}
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Enrichment panel */
+#enrich-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  z-index: 100;
+  display: none;
+  overflow: hidden;
+}
+#enrich-panel.visible { display: block; }
+#enrich-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+}
+#enrich-panel-header span {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+#enrich-close {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+#enrich-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px;
+}
+#enrich-list::-webkit-scrollbar { width: 3px; }
+#enrich-list::-webkit-scrollbar-thumb { background: var(--border2); }
+.enrich-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border-bottom: 1px solid var(--border);
+}
+.enrich-row:last-child { border-bottom: none; }
+.enrich-name {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.enrich-status {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  white-space: nowrap;
+}
+.enrich-contact {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--accent2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+#enrich-panel-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+#enrich-progress {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  padding: 6px 0;
+  text-align: center;
+}
+
+/* Notification toast */
+#toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%) translateY(60px);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 10px 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  z-index: 200;
+  transition: transform 0.3s;
+  pointer-events: none;
+}
+#toast.show { transform: translateX(-50%) translateY(0); }
+
+/* Scrollbar global */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div id="header">
+  <h1>BizTrace</h1>
+  <span class="pill">V7</span>
+  <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">ACRA Lead Intelligence</span>
+  <div class="spacer"></div>
+  <div id="total-badge">DB: <span id="db-count">—</span> companies</div>
+</div>
+
+<!-- Layout -->
+<div id="layout">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>Filters</span>
+      <button id="clear-filters-btn" onclick="clearAllFilters()">✕ Clear all</button>
+    </div>
+    <div id="sidebar-body">
+
+      <!-- Address -->
+      <div class="filter-group" id="fg-address">
+        <div class="filter-group-header" onclick="toggleGroup('fg-address')">
+          <span class="filter-group-label">Address</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <input class="filter-input" id="f-postal" placeholder="Postal code (e.g. 038987)" maxlength="6">
+          <input class="filter-input" id="f-building" placeholder="Building name">
+          <input class="filter-input" id="f-street" placeholder="Street name">
+          <div class="filter-row">
+            <label>Lvl</label>
+            <input class="filter-input" id="f-level" placeholder="e.g. 08">
+            <label>Unit</label>
+            <input class="filter-input" id="f-unit" placeholder="e.g. 01">
+          </div>
+        </div>
+      </div>
+
+      <!-- Entity Status -->
+      <div class="filter-group" id="fg-status">
+        <div class="filter-group-header" onclick="toggleGroup('fg-status')">
+          <span class="filter-group-label">Status</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div class="multi-select" id="ms-status"></div>
+        </div>
+      </div>
+
+      <!-- Entity Type -->
+      <div class="filter-group" id="fg-type">
+        <div class="filter-group-header" onclick="toggleGroup('fg-type')">
+          <span class="filter-group-label">Entity Type</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div class="multi-select" id="ms-type"></div>
+        </div>
+      </div>
+
+      <!-- Company Type -->
+      <div class="filter-group collapsed" id="fg-ctype">
+        <div class="filter-group-header" onclick="toggleGroup('fg-ctype')">
+          <span class="filter-group-label">Company Type</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div class="multi-select" id="ms-ctype"></div>
+        </div>
+      </div>
+
+      <!-- SSIC -->
+      <div class="filter-group collapsed" id="fg-ssic">
+        <div class="filter-group-header" onclick="toggleGroup('fg-ssic')">
+          <span class="filter-group-label">Industry (SSIC)</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <input class="filter-input" id="f-ssic" placeholder="Search SSIC code or description">
+        </div>
+      </div>
+
+      <!-- Dates -->
+      <div class="filter-group collapsed" id="fg-dates">
+        <div class="filter-group-header" onclick="toggleGroup('fg-dates')">
+          <span class="filter-group-label">Dates</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:2px">Annual Return Date</div>
+          <div class="filter-row">
+            <label>From</label>
+            <input class="filter-input" id="f-ard-from" type="date">
+          </div>
+          <div class="filter-row">
+            <label>To</label>
+            <input class="filter-input" id="f-ard-to" type="date">
+          </div>
+          <div class="toggle-row" style="margin-top:4px">
+            <label>Overdue only</label>
+            <label class="toggle">
+              <input type="checkbox" id="f-overdue">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:8px;margin-bottom:2px">Reg. Date</div>
+          <div class="filter-row">
+            <label>From</label>
+            <input class="filter-input" id="f-reg-from" type="date">
+          </div>
+          <div class="filter-row">
+            <label>To</label>
+            <input class="filter-input" id="f-reg-to" type="date">
+          </div>
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:8px;margin-bottom:2px">Account Due Date</div>
+          <div class="filter-row">
+            <label>From</label>
+            <input class="filter-input" id="f-acc-from" type="date">
+          </div>
+          <div class="filter-row">
+            <label>To</label>
+            <input class="filter-input" id="f-acc-to" type="date">
+          </div>
+        </div>
+      </div>
+
+      <!-- Size -->
+      <div class="filter-group collapsed" id="fg-size">
+        <div class="filter-group-header" onclick="toggleGroup('fg-size')">
+          <span class="filter-group-label">Company Size</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:4px">No. of Officers</div>
+          <div class="filter-row">
+            <label>Min</label>
+            <input class="filter-input" id="f-officers-min" type="number" min="0" placeholder="0">
+            <label>Max</label>
+            <input class="filter-input" id="f-officers-max" type="number" min="0" placeholder="Any">
+          </div>
+          <div class="toggle-row" style="margin-top:6px">
+            <label>Has auditor (large co.)</label>
+            <label class="toggle">
+              <input type="checkbox" id="f-auditor">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Name search -->
+      <div class="filter-group collapsed" id="fg-name">
+        <div class="filter-group-header" onclick="toggleGroup('fg-name')">
+          <span class="filter-group-label">Company Name</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <input class="filter-input" id="f-name" placeholder="Search name...">
+        </div>
+      </div>
+
+      <button class="apply-btn" onclick="applyFilters()">⚡ Apply Filters</button>
+
+    </div>
+
+    <!-- SerpAPI key -->
+    <div id="serp-section">
+      <label>SerpAPI Key</label>
+      <input class="filter-input" id="serp-key" type="password" placeholder="Paste your SerpAPI key">
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <div id="result-count"><strong id="match-count">0</strong> companies match</div>
+      <span id="selected-count">✓ <span id="sel-num">0</span> selected</span>
+      <div class="toolbar-spacer"></div>
+      <button class="tb-btn" onclick="selectPageAll()">☑ Select page</button>
+      <button class="tb-btn" id="enrich-btn" disabled onclick="openEnrichPanel()">🔍 Enrich Selected (<span id="enrich-count">0</span>)</button>
+      <button class="tb-btn" onclick="exportCSV()">↓ Export CSV</button>
+    </div>
+
+    <!-- Table -->
+    <div id="table-wrap">
+      <div id="state-overlay">
+        <div class="state-icon">⚡</div>
+        <div class="state-text">Set filters and click Apply</div>
+        <div class="state-sub">Use the filter panel on the left to search the ACRA database. Results will appear here.</div>
+      </div>
+      <table id="data-table" style="display:none">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this)" style="accent-color:var(--accent)"></th>
+            <th onclick="sortBy('uen')">UEN</th>
+            <th onclick="sortBy('entity_name')">Company Name</th>
+            <th onclick="sortBy('entity_status_description')">Status</th>
+            <th onclick="sortBy('entity_type_description')">Type</th>
+            <th onclick="sortBy('primary_ssic_description')">Industry</th>
+            <th onclick="sortBy('postal_code')">Postal</th>
+            <th onclick="sortBy('level_no')">Level</th>
+            <th onclick="sortBy('unit_no')">Unit</th>
+            <th onclick="sortBy('annual_return_date')">Ann. Return</th>
+            <th onclick="sortBy('no_of_officers')">Officers</th>
+            <th>Auditor</th>
+            <th>Contact</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div id="pagination" style="display:none">
+      <button class="page-btn" onclick="goPage(currentPage-1)" id="prev-btn">‹ Prev</button>
+      <div id="page-numbers"></div>
+      <button class="page-btn" onclick="goPage(currentPage+1)" id="next-btn">Next ›</button>
+      <span id="page-info"></span>
+    </div>
+
+  </div>
+</div>
+
+<!-- Enrichment Panel -->
+<div id="enrich-panel">
+  <div id="enrich-panel-header">
+    <span>Enriching contacts</span>
+    <button id="enrich-close" onclick="closeEnrichPanel()">✕</button>
+  </div>
+  <div id="enrich-list"></div>
+  <div id="enrich-progress"></div>
+  <div id="enrich-panel-footer">
+    <button class="tb-btn" style="flex:1" onclick="exportEnrichedCSV()">↓ Export enriched</button>
+    <button class="tb-btn primary" onclick="startEnrich()" id="start-enrich-btn">▶ Start</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════════════
+const SUPABASE_URL = 'https://ifyoyxoreswsaebebcdx.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmeW95eG9yZXN3c2FlYmViY2R4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MDc4NzQsImV4cCI6MjA5NDA4Mzg3NH0.mNb3NuhB4FvK_dFWJ0HH9jQq0HRVPzEn20U7waMLF-s';
+const PAGE_SIZE = 100;
+
+// ══════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════
+let allResults   = [];   // current filtered full dataset (UENs + key fields)
+let currentPage  = 1;
+let totalCount   = 0;
+let sortCol      = 'entity_name';
+let sortAsc      = true;
+let selected     = new Set();
+let enrichData   = {};   // uen → {website, phone, email, badge}
+let filterOptions = {};  // populated from DB distinct values
+
+// ══════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════
+async function init() {
+  loadSerpKey();
+  await loadFilterOptions();
+  await loadDbCount();
+}
+
+async function loadDbCount() {
+  const r = await sbHead('companies', {});
+  if (r.count !== null) {
+    document.getElementById('db-count').textContent = r.count.toLocaleString();
+  }
+}
+
+async function loadFilterOptions() {
+  // Load distinct values for multi-selects
+  const fields = [
+    { field: 'entity_status_description', el: 'ms-status' },
+    { field: 'entity_type_description',   el: 'ms-type'   },
+    { field: 'company_type_description',  el: 'ms-ctype'  },
+  ];
+
+  for (const { field, el } of fields) {
+    const vals = await sbDistinct(field);
+    filterOptions[field] = vals;
+    buildMultiSelect(el, vals);
+  }
+}
+
+function buildMultiSelect(elId, values) {
+  const el = document.getElementById(elId);
+  el.innerHTML = '';
+  values.filter(v => v).sort().forEach(v => {
+    const div = document.createElement('div');
+    div.className = 'multi-option';
+    const id = `cb-${elId}-${v.replace(/\W/g,'_')}`;
+    div.innerHTML = `
+      <input type="checkbox" id="${id}" value="${v}" checked>
+      <label for="${id}" title="${v}">${v}</label>`;
+    el.appendChild(div);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// SUPABASE HELPERS
+// ══════════════════════════════════════════════════════════════
+const SB_HEADERS = {
+  'apikey': SUPABASE_ANON,
+  'Authorization': `Bearer ${SUPABASE_ANON}`,
+  'Content-Type': 'application/json',
+};
+
+async function sbQuery(params, select, page = 1) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/companies`);
+  url.searchParams.set('select', select);
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, v);
+  }
+  const from = (page - 1) * PAGE_SIZE;
+  const to   = from + PAGE_SIZE - 1;
+  const r = await fetch(url.toString(), {
+    headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${from}-${to}`, 'Prefer': 'count=exact' }
+  });
+  const data = await r.json();
+  const count = parseInt(r.headers.get('Content-Range')?.split('/')[1] ?? '0');
+  return { data, count };
+}
+
+async function sbHead(table, params) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const r = await fetch(url.toString(), {
+    method: 'HEAD',
+    headers: { ...SB_HEADERS, 'Prefer': 'count=exact' }
+  });
+  const count = parseInt(r.headers.get('Content-Range')?.split('/')[1] ?? 'null');
+  return { count: isNaN(count) ? null : count };
+}
+
+async function sbDistinct(col) {
+  const url = `${SUPABASE_URL}/rest/v1/companies?select=${col}&limit=500`;
+  const r = await fetch(url, { headers: SB_HEADERS });
+  const data = await r.json();
+  return [...new Set(data.map(d => d[col]).filter(Boolean))];
+}
+
+// Build PostgREST filter params from UI
+function buildParams() {
+  const p = {};
+
+  const postal   = v('f-postal').trim();
+  const building = v('f-building').trim();
+  const street   = v('f-street').trim();
+  const level    = v('f-level').trim();
+  const unit     = v('f-unit').trim();
+  const ssic     = v('f-ssic').trim();
+  const name     = v('f-name').trim();
+  const ardFrom  = v('f-ard-from');
+  const ardTo    = v('f-ard-to');
+  const regFrom  = v('f-reg-from');
+  const regTo    = v('f-reg-to');
+  const accFrom  = v('f-acc-from');
+  const accTo    = v('f-acc-to');
+  const offMin   = v('f-officers-min');
+  const offMax   = v('f-officers-max');
+  const overdue  = document.getElementById('f-overdue').checked;
+  const auditor  = document.getElementById('f-auditor').checked;
+
+  if (postal)   p['postal_code']    = `eq.${postal}`;
+  if (building) p['building_name']  = `ilike.*${building}*`;
+  if (street)   p['street_name']    = `ilike.*${street}*`;
+  if (level)    p['level_no']       = `eq.${level}`;
+  if (unit)     p['unit_no']        = `eq.${unit}`;
+  if (name)     p['entity_name']    = `ilike.*${name}*`;
+  if (auditor)  p['has_auditor']    = `eq.true`;
+
+  if (ssic) {
+    // SSIC: match code prefix OR description keyword
+    p['or'] = `(primary_ssic_code.ilike.${ssic}*,primary_ssic_description.ilike.*${ssic}*)`;
+  }
+
+  if (ardFrom)  p['annual_return_date'] = `gte.${ardFrom}`;
+  if (ardTo)    p['annual_return_date'] = `lte.${ardTo}`;
+  if (ardFrom && ardTo) p['annual_return_date'] = `gte.${ardFrom}&annual_return_date=lte.${ardTo}`;
+
+  if (overdue)  p['annual_return_date'] = `lt.${today()}`;
+
+  if (regFrom)  p['registration_incorporation_date'] = `gte.${regFrom}`;
+  if (regTo)    p['registration_incorporation_date'] = `lte.${regTo}`;
+
+  if (accFrom)  p['account_due_date'] = `gte.${accFrom}`;
+  if (accTo)    p['account_due_date'] = `lte.${accTo}`;
+
+  if (offMin)   p['no_of_officers'] = `gte.${offMin}`;
+  if (offMax)   p['no_of_officers'] = (p['no_of_officers'] ? p['no_of_officers'] : '') + `&no_of_officers=lte.${offMax}`;
+
+  // Multi-selects — only filter if not all checked
+  const statusVals = getChecked('ms-status');
+  if (statusVals.length && statusVals.length < filterOptions['entity_status_description']?.length) {
+    p['entity_status_description'] = `in.(${statusVals.map(s => `"${s}"`).join(',')})`;
+  }
+  const typeVals = getChecked('ms-type');
+  if (typeVals.length && typeVals.length < filterOptions['entity_type_description']?.length) {
+    p['entity_type_description'] = `in.(${typeVals.map(s => `"${s}"`).join(',')})`;
+  }
+  const ctypeVals = getChecked('ms-ctype');
+  if (ctypeVals.length && ctypeVals.length < filterOptions['company_type_description']?.length) {
+    p['company_type_description'] = `in.(${ctypeVals.map(s => `"${s}"`).join(',')})`;
+  }
+
+  // Sort
+  p['order'] = `${sortCol}.${sortAsc ? 'asc' : 'desc'}.nullslast`;
+
+  return p;
+}
+
+const SELECT_COLS = [
+  'uen','entity_name','entity_status_description','entity_type_description',
+  'company_type_description','primary_ssic_code','primary_ssic_description',
+  'postal_code','block','street_name','level_no','unit_no','building_name',
+  'annual_return_date','account_due_date','registration_incorporation_date',
+  'no_of_officers','uen_of_audit_firm1','name_of_audit_firm1','row_hash'
+].join(',');
+
+// ══════════════════════════════════════════════════════════════
+// APPLY FILTERS
+// ══════════════════════════════════════════════════════════════
+async function applyFilters() {
+  currentPage = 1;
+  selected.clear();
+  updateSelectedUI();
+  await fetchPage(1);
+}
+
+async function fetchPage(page) {
+  showLoading();
+  const params = buildParams();
+  try {
+    const { data, count } = await sbQuery(params, SELECT_COLS, page);
+    totalCount  = count;
+    allResults  = data;
+    currentPage = page;
+    renderTable();
+    renderPagination();
+    document.getElementById('match-count').textContent = count.toLocaleString();
+    document.getElementById('state-overlay').style.display = 'none';
+    document.getElementById('data-table').style.display = '';
+    document.getElementById('pagination').style.display = '';
+  } catch(e) {
+    showError('Query failed: ' + e.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// RENDER TABLE
+// ══════════════════════════════════════════════════════════════
+function renderTable() {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+
+  if (!allResults.length) {
+    document.getElementById('state-overlay').style.display = 'flex';
+    document.getElementById('state-overlay').innerHTML = `
+      <div class="state-icon">🔍</div>
+      <div class="state-text">No results found</div>
+      <div class="state-sub">Try adjusting your filters.</div>`;
+    document.getElementById('data-table').style.display = 'none';
+    document.getElementById('pagination').style.display = 'none';
+    return;
+  }
+
+  allResults.forEach(row => {
+    const tr = document.createElement('tr');
+    if (selected.has(row.uen)) tr.classList.add('selected');
+    const enr = enrichData[row.uen] || {};
+
+    tr.innerHTML = `
+      <td><input type="checkbox" ${selected.has(row.uen)?'checked':''} onchange="toggleRow('${row.uen}',this)" style="accent-color:var(--accent)"></td>
+      <td class="uen-col">${row.uen}</td>
+      <td class="name-col" title="${esc(row.entity_name)}">${esc(row.entity_name||'—')}</td>
+      <td>${statusBadge(row.entity_status_description)}</td>
+      <td style="color:var(--text3);font-size:11px">${esc(shortType(row.entity_type_description))}</td>
+      <td style="color:var(--text3);font-size:11px" title="${esc(row.primary_ssic_description)}">${esc(row.primary_ssic_code||'')} ${esc(truncate(row.primary_ssic_description,30))}</td>
+      <td class="addr-col">${row.postal_code||'—'}</td>
+      <td class="addr-col">${row.level_no||'—'}</td>
+      <td class="addr-col">${row.unit_no||'—'}</td>
+      <td class="addr-col" style="${isOverdue(row.annual_return_date)?'color:var(--red)':''}">${fmt(row.annual_return_date)}</td>
+      <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
+      <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
+      <td>${enr.badge ? `<span class="badge badge-${enr.badgeClass}">${enr.badge}</span>${enr.email?` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>`:''}` : '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('select-all-cb').checked = false;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PAGINATION
+// ══════════════════════════════════════════════════════════════
+function renderPagination() {
+  const total = Math.ceil(totalCount / PAGE_SIZE);
+  const pn = document.getElementById('page-numbers');
+  pn.innerHTML = '';
+
+  const range = pageRange(currentPage, total);
+  range.forEach(p => {
+    if (p === '...') {
+      const s = document.createElement('span');
+      s.textContent = '…';
+      s.style.cssText = 'color:var(--text3);font-family:var(--mono);font-size:12px;padding:0 4px';
+      pn.appendChild(s);
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'page-btn' + (p === currentPage ? ' active' : '');
+      btn.textContent = p;
+      btn.onclick = () => goPage(p);
+      pn.appendChild(btn);
+    }
+  });
+
+  document.getElementById('prev-btn').disabled = currentPage <= 1;
+  document.getElementById('next-btn').disabled = currentPage >= total;
+  document.getElementById('page-info').textContent =
+    `${((currentPage-1)*PAGE_SIZE+1).toLocaleString()}–${Math.min(currentPage*PAGE_SIZE,totalCount).toLocaleString()} of ${totalCount.toLocaleString()}`;
+}
+
+function pageRange(cur, total) {
+  if (total <= 7) return Array.from({length:total},(_,i)=>i+1);
+  const pages = [];
+  if (cur <= 4) {
+    for (let i=1;i<=5;i++) pages.push(i);
+    pages.push('...'); pages.push(total);
+  } else if (cur >= total-3) {
+    pages.push(1); pages.push('...');
+    for (let i=total-4;i<=total;i++) pages.push(i);
+  } else {
+    pages.push(1); pages.push('...');
+    for (let i=cur-1;i<=cur+1;i++) pages.push(i);
+    pages.push('...'); pages.push(total);
+  }
+  return pages;
+}
+
+async function goPage(p) {
+  const total = Math.ceil(totalCount / PAGE_SIZE);
+  if (p < 1 || p > total) return;
+  await fetchPage(p);
+}
+
+// ══════════════════════════════════════════════════════════════
+// SELECTION
+// ══════════════════════════════════════════════════════════════
+function toggleRow(uen, cb) {
+  if (cb.checked) selected.add(uen);
+  else selected.delete(uen);
+  const tr = cb.closest('tr');
+  tr.classList.toggle('selected', cb.checked);
+  updateSelectedUI();
+}
+
+function toggleSelectAll(cb) {
+  allResults.forEach(r => {
+    if (cb.checked) selected.add(r.uen);
+    else selected.delete(r.uen);
+  });
+  renderTable();
+  document.getElementById('select-all-cb').checked = cb.checked;
+  updateSelectedUI();
+}
+
+function selectPageAll() {
+  allResults.forEach(r => selected.add(r.uen));
+  renderTable();
+  document.getElementById('select-all-cb').checked = true;
+  updateSelectedUI();
+}
+
+function updateSelectedUI() {
+  const n = selected.size;
+  document.getElementById('sel-num').textContent = n;
+  document.getElementById('enrich-count').textContent = n;
+  document.getElementById('selected-count').style.display = n ? 'block' : 'none';
+  document.getElementById('enrich-btn').disabled = n === 0;
+}
+
+// ══════════════════════════════════════════════════════════════
+// SORT
+// ══════════════════════════════════════════════════════════════
+function sortBy(col) {
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+  document.querySelectorAll('#data-table thead th').forEach(th => th.classList.remove('sorted'));
+  fetchPage(currentPage);
+}
+
+// ══════════════════════════════════════════════════════════════
+// EXPORT CSV
+// ══════════════════════════════════════════════════════════════
+async function exportCSV() {
+  showToast('Fetching all matching rows for export…');
+  const params = buildParams();
+  const url = new URL(`${SUPABASE_URL}/rest/v1/companies`);
+  url.searchParams.set('select', SELECT_COLS);
+  for (const [k, val] of Object.entries(params)) {
+    if (k !== 'order') url.searchParams.set(k, val);
+  }
+
+  // Fetch all pages
+  const allRows = [];
+  let offset = 0;
+  const batchSize = 1000;
+  while (true) {
+    const r = await fetch(url.toString(), {
+      headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${offset}-${offset+batchSize-1}` }
+    });
+    const batch = await r.json();
+    if (!batch.length) break;
+    allRows.push(...batch);
+    offset += batchSize;
+    if (batch.length < batchSize) break;
+  }
+
+  // Add enrichment data
+  const enrichedRows = allRows.map(r => ({
+    ...r,
+    website:  enrichData[r.uen]?.website  || '',
+    email:    enrichData[r.uen]?.email    || '',
+    phone:    enrichData[r.uen]?.phone    || '',
+    verified: enrichData[r.uen]?.badge    || '',
+  }));
+
+  downloadCSV(enrichedRows, 'biztrace_export.csv');
+  showToast(`Exported ${allRows.length.toLocaleString()} rows`);
+}
+
+function exportEnrichedCSV() {
+  const rows = allResults.filter(r => enrichData[r.uen]);
+  const enrichedRows = rows.map(r => ({
+    ...r,
+    website:  enrichData[r.uen]?.website  || '',
+    email:    enrichData[r.uen]?.email    || '',
+    phone:    enrichData[r.uen]?.phone    || '',
+    verified: enrichData[r.uen]?.badge    || '',
+  }));
+  downloadCSV(enrichedRows, 'biztrace_enriched.csv');
+}
+
+function downloadCSV(rows, filename) {
+  if (!rows.length) { showToast('No data to export'); return; }
+  const keys = Object.keys(rows[0]);
+  const lines = [keys.join(',')];
+  rows.forEach(r => {
+    lines.push(keys.map(k => {
+      const v = r[k] ?? '';
+      return `"${String(v).replace(/"/g,'""')}"`;
+    }).join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+// ══════════════════════════════════════════════════════════════
+// SERP ENRICHMENT
+// ══════════════════════════════════════════════════════════════
+function loadSerpKey() {
+  const k = localStorage.getItem('serp_key');
+  if (k) document.getElementById('serp-key').value = k;
+}
+
+function getSerpKey() {
+  const k = document.getElementById('serp-key').value.trim();
+  if (k) localStorage.setItem('serp_key', k);
+  return k;
+}
+
+function openEnrichPanel() {
+  const panel = document.getElementById('enrich-panel');
+  panel.classList.add('visible');
+  const list = document.getElementById('enrich-list');
+  list.innerHTML = '';
+
+  const selRows = allResults.filter(r => selected.has(r.uen));
+  selRows.forEach(r => {
+    const enr = enrichData[r.uen] || {};
+    const div = document.createElement('div');
+    div.className = 'enrich-row';
+    div.id = `er-${r.uen}`;
+    div.innerHTML = `
+      <div class="enrich-name" title="${esc(r.entity_name)}">${esc(truncate(r.entity_name,30))}</div>
+      <div class="enrich-status">${enr.badge || 'pending'}</div>
+      <div class="enrich-contact">${enr.email || enr.phone || ''}</div>
+    `;
+    list.appendChild(div);
+  });
+
+  document.getElementById('enrich-progress').textContent = `${selRows.length} companies queued`;
+}
+
+function closeEnrichPanel() {
+  document.getElementById('enrich-panel').classList.remove('visible');
+}
+
+async function startEnrich() {
+  const key = getSerpKey();
+  if (!key) { showToast('Enter your SerpAPI key first'); return; }
+
+  const selRows = allResults.filter(r => selected.has(r.uen));
+  const btn = document.getElementById('start-enrich-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+
+  for (let i = 0; i < selRows.length; i++) {
+    const row = selRows[i];
+    document.getElementById('enrich-progress').textContent =
+      `Processing ${i+1} / ${selRows.length}…`;
+
+    try {
+      // Step 1: SerpAPI search
+      const serpRes = await fetch(`/.netlify/functions/serp?q=${encodeURIComponent(row.entity_name + ' Singapore')}&key=${key}`);
+      const serpData = await serpRes.json();
+      const website = serpData?.website || serpData?.organic_results?.[0]?.link || null;
+
+      // Step 2: Fetch contact info
+      let contactData = {};
+      if (website) {
+        try {
+          const contactRes = await fetch(`/.netlify/functions/fetch-contact?url=${encodeURIComponent(website)}&uen=${row.uen}&name=${encodeURIComponent(row.entity_name)}`);
+          contactData = await contactRes.json();
+        } catch(e) {}
+      }
+
+      const badge = contactData.badge || (website ? 'UNVERIFIED' : 'NO WEB');
+      const badgeClass = {
+        'VERIFIED': 'verify', 'NAME MATCH': 'verify', 'LIKELY': 'likely',
+        'UNVERIFIED': 'unver', 'WRONG SITE': 'wrong', 'NO WEB': 'unver'
+      }[badge] || 'unver';
+
+      enrichData[row.uen] = {
+        website,
+        email:  contactData.email  || null,
+        phone:  contactData.phone  || null,
+        badge,
+        badgeClass,
+      };
+
+      // Update panel row
+      const er = document.getElementById(`er-${row.uen}`);
+      if (er) {
+        er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${badgeClass}">${badge}</span>`;
+        er.querySelector('.enrich-contact').textContent = contactData.email || contactData.phone || website || '—';
+      }
+    } catch(e) {
+      enrichData[row.uen] = { badge: 'ERROR', badgeClass: 'wrong', website: null, email: null, phone: null };
+    }
+
+    await sleep(800); // Rate limit respect
+  }
+
+  document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
+  btn.disabled = false;
+  btn.textContent = '▶ Start';
+  renderTable();
+}
+
+// ══════════════════════════════════════════════════════════════
+// FILTER UI HELPERS
+// ══════════════════════════════════════════════════════════════
+function toggleGroup(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
+function clearAllFilters() {
+  document.getElementById('f-postal').value = '';
+  document.getElementById('f-building').value = '';
+  document.getElementById('f-street').value = '';
+  document.getElementById('f-level').value = '';
+  document.getElementById('f-unit').value = '';
+  document.getElementById('f-ssic').value = '';
+  document.getElementById('f-name').value = '';
+  document.getElementById('f-ard-from').value = '';
+  document.getElementById('f-ard-to').value = '';
+  document.getElementById('f-reg-from').value = '';
+  document.getElementById('f-reg-to').value = '';
+  document.getElementById('f-acc-from').value = '';
+  document.getElementById('f-acc-to').value = '';
+  document.getElementById('f-officers-min').value = '';
+  document.getElementById('f-officers-max').value = '';
+  document.getElementById('f-overdue').checked = false;
+  document.getElementById('f-auditor').checked = false;
+  // Re-check all multi-selects
+  document.querySelectorAll('.multi-select input[type=checkbox]').forEach(cb => cb.checked = true);
+  showToast('Filters cleared');
+}
+
+function getChecked(elId) {
+  return [...document.querySelectorAll(`#${elId} input[type=checkbox]:checked`)].map(cb => cb.value);
+}
+
+// ══════════════════════════════════════════════════════════════
+// UI STATE
+// ══════════════════════════════════════════════════════════════
+function showLoading() {
+  const o = document.getElementById('state-overlay');
+  o.style.display = 'flex';
+  o.innerHTML = `<div class="spinner"></div><div class="state-text">Querying database…</div>`;
+  document.getElementById('data-table').style.display = 'none';
+  document.getElementById('pagination').style.display = 'none';
+}
+
+function showError(msg) {
+  const o = document.getElementById('state-overlay');
+  o.style.display = 'flex';
+  o.innerHTML = `<div class="state-icon">⚠️</div><div class="state-text">${msg}</div>`;
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ══════════════════════════════════════════════════════════════
+// UTILS
+// ══════════════════════════════════════════════════════════════
+function v(id) { return document.getElementById(id)?.value || ''; }
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function truncate(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : (s||''); }
+function today() { return new Date().toISOString().split('T')[0]; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function fmt(d) { return d ? d.slice(0,10) : '—'; }
+function isOverdue(d) { return d && d < today(); }
+
+function shortType(t) {
+  if (!t) return '—';
+  const map = {
+    'LOCAL COMPANY': 'Local Co.',
+    'FOREIGN COMPANY': 'Foreign Co.',
+    'SOLE PROPRIETORSHIP': 'Sole Prop',
+    'LIMITED LIABILITY PARTNERSHIP': 'LLP',
+    'PARTNERSHIP': 'Partnership',
+    'LIMITED PARTNERSHIP': 'Ltd Partnership',
+    'PUBLIC COMPANY LIMITED BY GUARANTEE': 'Public Ltd Guarantee',
+  };
+  return map[t.toUpperCase()] || t;
+}
+
+function statusBadge(s) {
+  if (!s) return '—';
+  const cls = s.includes('Live') ? 'badge-live'
+    : s.includes('Liquidation') ? 'badge-liq'
+    : 'badge-warn';
+  const short = s === 'Live Company' ? 'LIVE' : s === 'Live' ? 'LIVE'
+    : s.includes('Liquidation') ? 'LIQUID.'
+    : s.includes('Gazetted') ? 'GAZETTE'
+    : s.includes('Cancellation') ? 'CANCEL'
+    : s.slice(0,10);
+  return `<span class="badge ${cls}">${short}</span>`;
+}
+
+// Enter key on filters
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.classList.contains('filter-input')) applyFilters();
+});
+
+// ══════════════════════════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════════════════════════
+init();
+</script>
+</body>
+</html>
