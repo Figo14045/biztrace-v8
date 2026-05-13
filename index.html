@@ -921,18 +921,28 @@ async function loadDbCount() {
 }
 
 async function loadFilterOptions() {
-  // Load distinct values for multi-selects
-  const fields = [
-    { field: 'entity_status_description', el: 'ms-status' },
-    { field: 'entity_type_description',   el: 'ms-type'   },
-    { field: 'company_type_description',  el: 'ms-ctype'  },
+  // Hardcode known status values so full dataset always shows
+  const knownStatuses = [
+    'Live', 'Live Company',
+    'Live (Receiver or Receiver and Manager appointed)',
+    'Gazetted To Be Struck Off', 'Cancellation In Progress',
+    'To Be Ceased', 'In Liquidation',
+    'In Liquidation - Compulsory Winding Up (Insolvency)',
+    'In Liquidation - Members voluntary winding up',
+    'In Liquidation - Creditors voluntary winding up',
+    'In Liquidation - Compulsory Winding Up',
+    'In Liquidation - Simplified Winding Up',
   ];
+  filterOptions['entity_status_description'] = knownStatuses;
+  buildMultiSelect('ms-status', knownStatuses);
 
-  for (const { field, el } of fields) {
-    const vals = await sbDistinct(field);
-    filterOptions[field] = vals;
-    buildMultiSelect(el, vals);
-  }
+  // Load entity type and company type from DB
+  const typeVals  = await sbDistinct('entity_type_description');
+  const ctypeVals = await sbDistinct('company_type_description');
+  filterOptions['entity_type_description']  = typeVals;
+  filterOptions['company_type_description'] = ctypeVals;
+  buildMultiSelect('ms-type',  typeVals);
+  buildMultiSelect('ms-ctype', ctypeVals);
 }
 
 function buildMultiSelect(elId, values) {
@@ -1052,16 +1062,22 @@ function buildParams() {
   if (offMax)   p['no_of_officers'] = (p['no_of_officers'] ? p['no_of_officers'] : '') + `&no_of_officers=lte.${offMax}`;
 
   // Multi-selects — only filter if not all checked
-  const statusVals = getChecked('ms-status');
-  if (statusVals.length && statusVals.length < filterOptions['entity_status_description']?.length) {
+  const allStatuses = filterOptions['entity_status_description'] || [];
+  const statusVals  = getChecked('ms-status');
+  // Only filter if user unchecked some — if all checked, don't restrict
+  if (statusVals.length > 0 && statusVals.length < allStatuses.length) {
     p['entity_status_description'] = `in.(${statusVals.map(s => `"${s}"`).join(',')})`;
   }
+
+  const allTypes = filterOptions['entity_type_description'] || [];
   const typeVals = getChecked('ms-type');
-  if (typeVals.length && typeVals.length < filterOptions['entity_type_description']?.length) {
+  if (typeVals.length > 0 && typeVals.length < allTypes.length) {
     p['entity_type_description'] = `in.(${typeVals.map(s => `"${s}"`).join(',')})`;
   }
+
+  const allCtypes = filterOptions['company_type_description'] || [];
   const ctypeVals = getChecked('ms-ctype');
-  if (ctypeVals.length && ctypeVals.length < filterOptions['company_type_description']?.length) {
+  if (ctypeVals.length > 0 && ctypeVals.length < allCtypes.length) {
     p['company_type_description'] = `in.(${ctypeVals.map(s => `"${s}"`).join(',')})`;
   }
 
