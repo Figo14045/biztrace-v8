@@ -1,334 +1,275 @@
-// Netlify function — fetches a company website and verifies the match
-// against the supplied UEN and company name.
-//
-// GET /.netlify/functions/fetch-contact?url=https://example.com.sg
-//                                       &uen=201624862C
-//                                       &name=ALT%20CAPITAL%20PTE.%20LTD.
-//
-// Returns:
-// {
-//   success: true,
-//   phones: ["+65 6123 4567"],
-//   emails: ["info@example.com.sg"],
-//   verification: "UEN_MATCH" | "NAME_MATCH" | "LIKELY" | "UNVERIFIED" | "MISMATCH",
-//   verificationDetail: "UEN 201624862C found on contact page",
-//   contactUrl: "https://example.com.sg/contact",
-// }
+// BizTrace V7 — Smart Contact Fetcher
+// Logic:
+// 1. Receive organic_results from SerpAPI + company name + UEN
+// 2. Skip known directory/job/social sites
+// 3. Find results whose domain matches the company name
+// 4. Fetch that page and extract phone/email
+// 5. Verify UEN or name on page for trust badge
 
-const https = require('https');
-const http = require('http');
-const { URL } = require('url');
+// ── Blocklist — domains that are never the company's own site ──────────────
+const BLOCKED_DOMAINS = [
+  'zoominfo.com', 'linkedin.com', 'facebook.com', 'instagram.com',
+  'twitter.com', 'jobstreet.com', 'fastjobs.sg', 'mycareersfuture.gov.sg',
+  'glassdoor.com', 'indeed.com', 'gradsingapore.com', 'sgpbusiness.com',
+  'bizfile.acra.gov.sg', 'acra.gov.sg', 'yellowpages.com.sg',
+  'singpost.com', 'straitstimes.com', 'channelnewsasia.com',
+  'businesstimes.com.sg', 'todayonline.com', 'mothership.sg',
+  'hungrygowhere.com', 'tripadvisor.com', 'google.com',
+  'wikipedia.org', 'crunchbase.com', 'bloomberg.com',
+  'sgx.com', 'mas.gov.sg', 'gov.sg', 'iras.gov.sg',
+  'sitegiant.sg', 'ecommercemilo.com', 'lazada.com', 'shopee.sg',
+  'open.lazada.com', 'seller.lazada.sg',
+];
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const FETCH_TIMEOUT = 6000;
-const MAX_BYTES     = 500000;
+// ── Phone patterns for Singapore ──────────────────────────────────────────
+const PHONE_PATTERNS = [
+  /(\+65[\s-]?[689]\d{3}[\s-]?\d{4})/g,   // +65 XXXX XXXX
+  /(\b[689]\d{3}[\s-]?\d{4}\b)/g,           // 6XXX XXXX / 8XXX XXXX / 9XXX XXXX
+  /(\b65[\s-]?[689]\d{3}[\s-]?\d{4}\b)/g,  // 65-XXXX XXXX
+];
 
-// Regex patterns
-const PHONE_RE = /(?:\+?65[\s\-]?)?[3689]\d{3}[\s\-]?\d{4}/g;
-const EMAIL_RE = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,30}/g;
+// ── Email pattern ──────────────────────────────────────────────────────────
+const EMAIL_PATTERN = /([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/g;
 
-// Singapore UEN patterns:
-//   yyyy nnnnn X  (standard company UEN)  e.g. 201624862C
-//   Sxx nnnnn X    (societies/charities)   e.g. S70SS0015K
-//   Txx XX nnnn X  (Tnn-prefix entities)   e.g. T13SM0002A
-// For this use case we only match the standard company pattern since we're
-// enriching filtered ACRA Local Companies.
-const UEN_IN_TEXT_RE = /\b((?:19|20)\d{2}\d{5}[A-Z]|[ST]\d{2}[A-Z]{2}\d{4}[A-Z])\b/gi;
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-// Contact-page link patterns
-const CONTACT_LINK_RE = /<a[^>]+href=["']([^"']+)["'][^>]*>[^<]*(?:contact|reach us|get in touch|contact us)[^<]*<\/a>/gi;
-const CONTACT_URL_RE  = /<a[^>]+href=["']([^"'#]*(?:contact|contact-us|contactus|reach-us|get-in-touch)[^"']*)["']/gi;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HTTP fetching with timeout + redirect following
-// ─────────────────────────────────────────────────────────────────────────────
-function fetchPage(urlStr) {
-  return new Promise((resolve, reject) => {
-    let u;
-    try { u = new URL(urlStr); }
-    catch { return reject(new Error('Invalid URL')); }
-
-    const lib = u.protocol === 'https:' ? https : http;
-
-    const req = lib.request({
-      hostname: u.hostname,
-      port: u.port,
-      path: (u.pathname || '/') + (u.search || ''),
-      method: 'GET',
-      timeout: FETCH_TIMEOUT,
-      headers: {
-        'User-Agent': UA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-SG,en;q=0.9',
-      },
-    }, (res) => {
-      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
-        res.resume();
-        return resolve({ redirect: new URL(res.headers.location, urlStr).toString() });
-      }
-      if (res.statusCode >= 400) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode}`));
-      }
-      const ct = (res.headers['content-type'] || '').toLowerCase();
-      if (!ct.includes('text/html') && !ct.includes('text/plain') && !ct.includes('application/xhtml')) {
-        res.resume();
-        return reject(new Error('Not HTML'));
-      }
-
-      let body = '';
-      res.on('data', (chunk) => {
-        body += chunk.toString('utf-8');
-        if (body.length > MAX_BYTES) {
-          res.destroy();
-          resolve({ html: body, finalUrl: urlStr });
-        }
-      });
-      res.on('end', () => resolve({ html: body, finalUrl: urlStr }));
-    });
-
-    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-    req.on('error', reject);
-    req.end();
-  });
-}
-
-async function fetchFollow(urlStr, hops = 3) {
-  let current = urlStr;
-  for (let i = 0; i <= hops; i++) {
-    const r = await fetchPage(current);
-    if (r.redirect) { current = r.redirect; continue; }
-    return r;
+function getDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return '';
   }
-  throw new Error('Too many redirects');
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HTML processing
-// ─────────────────────────────────────────────────────────────────────────────
-function htmlToText(html) {
-  return html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ');
+function isBlocked(url) {
+  const domain = getDomain(url);
+  return BLOCKED_DOMAINS.some(b => domain === b || domain.endsWith('.' + b));
 }
 
-function findContactPageUrl(homepageUrl, html) {
-  const candidates = new Set();
-  let m;
+// Extract meaningful keywords from company name for domain matching
+// "Lazada Singapore Pte Ltd" → ["lazada"]
+// "Lim & Tan Securities Pte Ltd" → ["lim", "tan", "securities"]
+function extractKeywords(name) {
+  const stopwords = new Set([
+    'pte', 'ltd', 'llp', 'lp', 'co', 'corp', 'inc', 'sdn', 'bhd',
+    'singapore', 'sg', 'and', 'the', 'of', 'for', 'de', 'van',
+    'private', 'limited', 'company', 'enterprise', 'enterprises',
+    'group', 'holdings', 'international', 'global', 'asia', 'pacific',
+    'services', 'solutions', 'management', 'trading', 'investment',
+    '&', '-', '(s)'
+  ]);
 
-  const p1 = new RegExp(CONTACT_LINK_RE.source, CONTACT_LINK_RE.flags);
-  while ((m = p1.exec(html)) !== null) candidates.add(m[1]);
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stopwords.has(w));
+}
 
-  const p2 = new RegExp(CONTACT_URL_RE.source, CONTACT_URL_RE.flags);
-  while ((m = p2.exec(html)) !== null) candidates.add(m[1]);
+// Check if a domain plausibly belongs to the company
+function domainMatchesCompany(url, companyName) {
+  const domain = getDomain(url);
+  const keywords = extractKeywords(companyName);
+  // At least one keyword must appear in the domain
+  return keywords.some(kw => domain.includes(kw));
+}
 
-  // Common default paths
-  ['/contact', '/contact-us', '/contactus', '/get-in-touch'].forEach(p => candidates.add(p));
-
-  let baseHost;
-  try { baseHost = new URL(homepageUrl).hostname; } catch { return null; }
-
-  for (const raw of candidates) {
-    try {
-      const abs = new URL(raw, homepageUrl).toString();
-      const absHost = new URL(abs).hostname;
-      if (absHost === baseHost) return abs;
-    } catch { /* skip */ }
+// Extract phone numbers from text
+function extractPhone(text) {
+  for (const pattern of PHONE_PATTERNS) {
+    pattern.lastIndex = 0;
+    const matches = text.match(pattern);
+    if (matches && matches.length > 0) {
+      // Clean up and return first valid match
+      const phone = matches[0].replace(/\s+/g, ' ').trim();
+      // Sanity check: must be 8 digits (SG numbers)
+      const digits = phone.replace(/\D/g, '');
+      if (digits.length === 8 || digits.length === 10 || digits.length === 11) {
+        return phone;
+      }
+    }
   }
   return null;
 }
 
-function extractMailtoTel(html) {
-  const phones = [];
-  const emails = [];
-  const mt = /mailto:([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,30})/gi;
-  const tl = /tel:([+\d\s\-()]{7,})/gi;
-  let m;
-  while ((m = mt.exec(html)) !== null) emails.push(m[1].toLowerCase());
-  while ((m = tl.exec(html)) !== null) phones.push(m[1]);
-  return { phones, emails };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Verification — check if the page actually belongs to the given UEN/company
-// ─────────────────────────────────────────────────────────────────────────────
-function normalizeName(name) {
-  // Strip corporate suffixes and punctuation; collapse whitespace; lowercase.
-  return (name || '')
-    .toLowerCase()
-    .replace(/\b(pte\.?\s*ltd\.?|private\s+limited|pte\s+ltd|limited|llp|llc|inc\.?|corp\.?|holdings?|pvt\.?\s*ltd\.?)\b/gi, '')
-    .replace(/[.,'"&()]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function verifyMatch(combinedText, expectedUen, expectedName) {
-  const text = combinedText.toLowerCase();
-  const result = { verification: 'UNVERIFIED', detail: 'No name or UEN found on page' };
-
-  // STEP 1 — Find every UEN mentioned in the text
-  const uensInPage = new Set();
-  let m;
-  const uenRe = new RegExp(UEN_IN_TEXT_RE.source, UEN_IN_TEXT_RE.flags);
-  while ((m = uenRe.exec(combinedText)) !== null) {
-    uensInPage.add(m[1].toUpperCase());
-  }
-
-  // STEP 2 — UEN match (strongest)
-  if (expectedUen && uensInPage.has(expectedUen.toUpperCase())) {
-    return { verification: 'UEN_MATCH', detail: `UEN ${expectedUen} found in page` };
-  }
-
-  // STEP 3 — UEN mismatch (a DIFFERENT UEN appears but not ours)
-  if (expectedUen && uensInPage.size > 0 && !uensInPage.has(expectedUen.toUpperCase())) {
-    // Be careful — a page might list many UENs (e.g. case studies, clients).
-    // Only flag as mismatch if there's a single UEN and it's clearly "ours" (footer, about page)
-    // For now, this is a soft signal — mark unverified but note the mismatch
-    if (uensInPage.size === 1) {
-      const otherUen = [...uensInPage][0];
-      result.detail = `Page lists UEN ${otherUen}, not ${expectedUen}`;
-      // Don't set verification=MISMATCH yet — continue to name check
+// Extract email from text, skip generic/noreply emails
+function extractEmail(text) {
+  const matches = text.match(EMAIL_PATTERN);
+  if (!matches) return null;
+  const blocked = ['noreply', 'no-reply', 'donotreply', 'support@', 'info@google', 'example.com'];
+  for (const email of matches) {
+    const lower = email.toLowerCase();
+    if (!blocked.some(b => lower.includes(b))) {
+      return email.toLowerCase();
     }
   }
-
-  // STEP 4 — Full normalized name match
-  const normalizedName = normalizeName(expectedName);
-  if (normalizedName && normalizedName.length >= 3) {
-    // Full match — the whole normalized name string appears in the text
-    if (text.includes(normalizedName)) {
-      return { verification: 'NAME_MATCH', detail: `Company name "${expectedName}" found in page` };
-    }
-
-    // Token-based partial match: if all the distinctive words appear (in any order)
-    const tokens = normalizedName.split(/\s+/).filter(t => t.length >= 3);
-    if (tokens.length > 0) {
-      const allFound = tokens.every(t => text.includes(t));
-      if (allFound) {
-        return { verification: 'LIKELY', detail: `All name tokens (${tokens.join(', ')}) found on page` };
-      }
-
-      // First distinctive token appears — softer signal
-      if (tokens[0] && text.includes(tokens[0]) && tokens[0].length >= 4) {
-        return { verification: 'LIKELY', detail: `Partial name match: "${tokens[0]}"` };
-      }
-    }
-  }
-
-  // STEP 5 — No match: if page had a DIFFERENT UEN only, upgrade to MISMATCH
-  if (expectedUen && uensInPage.size === 1 && !uensInPage.has(expectedUen.toUpperCase())) {
-    return { verification: 'MISMATCH', detail: result.detail };
-  }
-
-  return result;  // UNVERIFIED
+  return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
-async function fetchAndVerify(homepageUrl, expectedUen, expectedName) {
-  let homepage;
+// Fetch page HTML with timeout
+async function fetchPage(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    homepage = await fetchFollow(homepageUrl);
-  } catch (e) {
-    return { success: false, error: `homepage: ${e.message}` };
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-SG,en;q=0.9',
+      },
+      redirect: 'follow',
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const text = await res.text();
+    return text.slice(0, 200000); // limit to 200KB
+  } catch {
+    clearTimeout(timer);
+    return null;
   }
-
-  const homepageHtml = homepage.html;
-
-  // Skip if the page is too small or a JS-required SPA shell
-  if (homepageHtml.length < 500 || /please enable javascript/i.test(homepageHtml)) {
-    return { success: false, error: 'SPA or empty page' };
-  }
-
-  // Try fetching the contact page too
-  let contactHtml = '';
-  let contactUrl = null;
-  const candidate = findContactPageUrl(homepage.finalUrl, homepageHtml);
-  if (candidate && candidate !== homepage.finalUrl) {
-    try {
-      const c = await fetchFollow(candidate);
-      contactHtml = c.html;
-      contactUrl = c.finalUrl;
-    } catch { /* ignore, still have homepage */ }
-  }
-
-  // Combine both pages for extraction
-  const combinedHtml = homepageHtml + ' ' + contactHtml;
-  const combinedText = htmlToText(combinedHtml);
-
-  // Verify the site matches the expected UEN/name
-  const verification = verifyMatch(combinedHtml + ' ' + combinedText, expectedUen, expectedName);
-
-  // Extract contact info
-  const fromLinks = extractMailtoTel(combinedHtml);
-  const textPhones = combinedText.match(PHONE_RE) || [];
-  const textEmails = combinedText.match(EMAIL_RE) || [];
-
-  const phones = [...new Set([...fromLinks.phones, ...textPhones])];
-  const emails = [...new Set([...fromLinks.emails, ...textEmails].map(e => e.toLowerCase()))];
-
-  return {
-    success: true,
-    phones,
-    emails,
-    contactUrl,
-    homepageUrl: homepage.finalUrl,
-    pageSource: contactUrl ? 'contact-page' : 'homepage-only',
-    verification: verification.verification,
-    verificationDetail: verification.detail,
-  };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Handler
-// ─────────────────────────────────────────────────────────────────────────────
-exports.handler = async (event) => {
+// Determine trust badge
+function getBadge(html, uen, companyName) {
+  if (!html) return 'UNVERIFIED';
+  const lower = html.toLowerCase();
+  const uenClean = (uen || '').toLowerCase();
+  const nameClean = (companyName || '').toLowerCase();
+
+  if (uenClean && lower.includes(uenClean)) return 'VERIFIED';
+
+  // Check if significant part of company name appears on page
+  const keywords = extractKeywords(companyName);
+  const matchCount = keywords.filter(kw => lower.includes(kw)).length;
+  if (matchCount >= 2) return 'NAME MATCH';
+  if (matchCount === 1) return 'LIKELY';
+
+  return 'UNVERIFIED';
+}
+
+// ── Main handler ───────────────────────────────────────────────────────────
+
+exports.handler = async function(event) {
+
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS'
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
       },
       body: ''
     };
   }
-  if (event.httpMethod !== 'GET') return { statusCode: 405, body: 'Method Not Allowed' };
 
-  const params = event.queryStringParameters || {};
-  const url  = params.url;
-  const uen  = params.uen  || '';
-  const name = params.name || '';
-
-  if (!url) {
-    return {
-      statusCode: 400,
-      headers: { 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ error: 'Missing url parameter' })
-    };
+  // Support both POST (preferred) and GET
+  let uen, name, results;
+  if (event.httpMethod === 'POST' && event.body) {
+    const body = JSON.parse(event.body);
+    uen     = body.uen     || '';
+    name    = body.name    || '';
+    results = body.results || [];
+  } else {
+    const params = event.queryStringParameters || {};
+    uen     = params.uen  || '';
+    name    = decodeURIComponent(params.name || '');
+    results = JSON.parse(decodeURIComponent(params.results || '[]'));
   }
 
-  try {
-    const result = await fetchAndVerify(url, uen, name);
+  if (!results.length) {
     return {
       statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      },
-      body: JSON.stringify(result)
-    };
-  } catch (err) {
-    return {
-      statusCode: 500,
-      headers: { 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ error: err.message, success: false })
+      headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ badge: 'NO WEB', website: null, phone: null, email: null })
     };
   }
+
+  // ── Step 1: Filter out blocked domains ──────────────────────────────────
+  const candidates = results.filter(r => r.link && !isBlocked(r.link));
+
+  if (!candidates.length) {
+    return {
+      statusCode: 200,
+      headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ badge: 'NO WEB', website: null, phone: null, email: null })
+    };
+  }
+
+  // ── Step 2: Find domain-matched results first ────────────────────────────
+  const matched   = candidates.filter(r => domainMatchesCompany(r.link, name));
+  const unmatched = candidates.filter(r => !domainMatchesCompany(r.link, name));
+
+  // Try matched first, then unmatched as fallback
+  const ordered = [...matched, ...unmatched].slice(0, 5); // max 5 attempts
+
+  for (const result of ordered) {
+    const url = result.link;
+
+    // ── Step 3: Try snippet first (free, no fetch needed) ─────────────────
+    const snippet = (result.snippet || '') + ' ' + (result.snippet_highlighted_words || []).join(' ');
+    const snippetPhone = extractPhone(snippet);
+    const snippetEmail = extractEmail(snippet);
+
+    // Only trust snippet contact if domain matches company
+    if ((snippetPhone || snippetEmail) && domainMatchesCompany(url, name)) {
+      return {
+        statusCode: 200,
+        headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          badge:   'LIKELY',
+          website: url,
+          phone:   snippetPhone,
+          email:   snippetEmail,
+          source:  'snippet'
+        })
+      };
+    }
+
+    // ── Step 4: Fetch the page ────────────────────────────────────────────
+    const html = await fetchPage(url);
+    if (!html) continue;
+
+    const phone = extractPhone(html);
+    const email = extractEmail(html);
+
+    if (phone || email) {
+      const badge = getBadge(html, uen, name);
+      return {
+        statusCode: 200,
+        headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          badge,
+          website: url,
+          phone,
+          email,
+          source: 'page'
+        })
+      };
+    }
+
+    // Found the right site but no contact info — still report the website
+    if (domainMatchesCompany(url, name)) {
+      const badge = getBadge(html, uen, name);
+      return {
+        statusCode: 200,
+        headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          badge,
+          website: url,
+          phone:   null,
+          email:   null,
+          source:  'page'
+        })
+      };
+    }
+  }
+
+  // Nothing found
+  return {
+    statusCode: 200,
+    headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ badge: 'NO WEB', website: null, phone: null, email: null })
+  };
 };

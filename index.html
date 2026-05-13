@@ -848,6 +848,7 @@ body {
             <th onclick="sortBy('annual_return_date')">Ann. Return</th>
             <th onclick="sortBy('no_of_officers')">Officers</th>
             <th>Auditor</th>
+            <th>Website</th>
             <th>Contact</th>
           </tr>
         </thead>
@@ -958,14 +959,23 @@ const SB_HEADERS = {
 };
 
 async function sbQuery(params, select, page = 1) {
-  const url = new URL(`${SUPABASE_URL}/rest/v1/companies`);
-  url.searchParams.set('select', select);
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v);
-  }
+  // Build URL manually to avoid URL encoding issues with PostgREST operators
   const from = (page - 1) * PAGE_SIZE;
   const to   = from + PAGE_SIZE - 1;
-  const r = await fetch(url.toString(), {
+
+  // Separate order from filter params
+  const { order, ...filterParams } = params;
+
+  // Build query string manually — PostgREST needs raw operators like gte., lte., eq.
+  const parts = [`select=${encodeURIComponent(select)}`];
+  for (const [k, val] of Object.entries(filterParams)) {
+    parts.push(`${k}=${val}`);
+  }
+  if (order) parts.push(`order=${order}`);
+
+  const url = `${SUPABASE_URL}/rest/v1/companies?${parts.join('&')}`;
+
+  const r = await fetch(url, {
     headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${from}-${to}`, 'Prefer': 'count=exact' }
   });
   const data = await r.json();
@@ -1056,7 +1066,7 @@ function buildParams() {
   }
 
   // Sort
-  p['order'] = `${sortCol}.${sortAsc ? 'asc' : 'desc'}.nullslast`;
+  p['order'] = `${sortCol}.${sortAsc ? 'asc' : 'desc'}.nulls.last`;
 
   return p;
 }
@@ -1134,7 +1144,8 @@ function renderTable() {
       <td class="addr-col" style="${isOverdue(row.annual_return_date)?'color:var(--red)':''}">${fmt(row.annual_return_date)}</td>
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
       <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
-      <td>${enr.badge ? `<span class="badge badge-${enr.badgeClass}">${enr.badge}</span>${enr.email?` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>`:''}` : '—'}</td>
+      <td>${enr.website ? `<a href="${enr.website}" target="_blank" style="color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px" title="${enr.website}">${enr.website.replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0]}</a>` : '—'}</td>
+      <td>${enr.badge && enr.badge !== 'ERROR' ? `<span class="badge badge-${enr.badgeClass}">${enr.badge}</span>${enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : ''}${enr.email ? ` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>` : ''}` : '—'}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -1247,18 +1258,21 @@ function sortBy(col) {
 async function exportCSV() {
   showToast('Fetching all matching rows for export…');
   const params = buildParams();
-  const url = new URL(`${SUPABASE_URL}/rest/v1/companies`);
-  url.searchParams.set('select', SELECT_COLS);
-  for (const [k, val] of Object.entries(params)) {
-    if (k !== 'order') url.searchParams.set(k, val);
-  }
+  const { order, ...filterParams } = params;
 
-  // Fetch all pages
+  const parts = [`select=${encodeURIComponent(SELECT_COLS)}`];
+  for (const [k, val] of Object.entries(filterParams)) {
+    parts.push(`${k}=${val}`);
+  }
+  if (order) parts.push(`order=${order}`);
+
+  const baseUrl = `${SUPABASE_URL}/rest/v1/companies?${parts.join('&')}`;
+
   const allRows = [];
   let offset = 0;
   const batchSize = 1000;
   while (true) {
-    const r = await fetch(url.toString(), {
+    const r = await fetch(baseUrl, {
       headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${offset}-${offset+batchSize-1}` }
     });
     const batch = await r.json();
@@ -1268,7 +1282,6 @@ async function exportCSV() {
     if (batch.length < batchSize) break;
   }
 
-  // Add enrichment data
   const enrichedRows = allRows.map(r => ({
     ...r,
     website:  enrichData[r.uen]?.website  || '',
@@ -1356,6 +1369,8 @@ async function startEnrich() {
   if (!key) { showToast('Enter your SerpAPI key first'); return; }
 
   const selRows = allResults.filter(r => selected.has(r.uen));
+  if (!selRows.length) { showToast('No rows selected'); return; }
+
   const btn = document.getElementById('start-enrich-btn');
   btn.disabled = true;
   btn.textContent = '⏳ Running…';
@@ -1366,45 +1381,59 @@ async function startEnrich() {
       `Processing ${i+1} / ${selRows.length}…`;
 
     try {
-      // Step 1: SerpAPI search
-      const serpRes = await fetch(`/.netlify/functions/serp?q=${encodeURIComponent(row.entity_name + ' Singapore')}&key=${key}`);
-      const serpData = await serpRes.json();
-      const website = serpData?.website || serpData?.organic_results?.[0]?.link || null;
-
-      // Step 2: Fetch contact info
-      let contactData = {};
-      if (website) {
-        try {
-          const contactRes = await fetch(`/.netlify/functions/fetch-contact?url=${encodeURIComponent(website)}&uen=${row.uen}&name=${encodeURIComponent(row.entity_name)}`);
-          contactData = await contactRes.json();
-        } catch(e) {}
+      // Step 1: SerpAPI search via Netlify function
+      const serpRes = await fetch(`/.netlify/functions/serp?q=${encodeURIComponent('"' + row.entity_name + '" Singapore')}&api_key=${key}`);
+      if (!serpRes.ok) {
+        throw new Error(`serp function returned ${serpRes.status} — is it deployed?`);
       }
+      const serpData = await serpRes.json();
+      const organicResults = serpData?.organic_results || [];
 
-      const badge = contactData.badge || (website ? 'UNVERIFIED' : 'NO WEB');
+      // Step 2: POST all results to fetch-contact for smart domain matching
+      let contactData = {};
+      try {
+        const contactRes = await fetch(`/.netlify/functions/fetch-contact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            uen: row.uen,
+            name: row.entity_name,
+            results: organicResults
+          })
+        });
+        if (contactRes.ok) contactData = await contactRes.json();
+      } catch(e) { console.error("fetch-contact error:", e); }
+
+      const badge = contactData.badge || 'NO WEB';
       const badgeClass = {
         'VERIFIED': 'verify', 'NAME MATCH': 'verify', 'LIKELY': 'likely',
         'UNVERIFIED': 'unver', 'WRONG SITE': 'wrong', 'NO WEB': 'unver'
       }[badge] || 'unver';
 
       enrichData[row.uen] = {
-        website,
-        email:  contactData.email  || null,
-        phone:  contactData.phone  || null,
+        website: contactData.website || null,
+        email:   contactData.email   || null,
+        phone:   contactData.phone   || null,
         badge,
         badgeClass,
       };
 
-      // Update panel row
+      // Update panel row live
       const er = document.getElementById(`er-${row.uen}`);
       if (er) {
         er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${badgeClass}">${badge}</span>`;
-        er.querySelector('.enrich-contact').textContent = contactData.email || contactData.phone || website || '—';
+        const contact = contactData.email || contactData.phone || '';
+        const site = contactData.website ? `<a href="${contactData.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(contactData.website).hostname}</a>` : '';
+        er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + site || '—';
       }
     } catch(e) {
       enrichData[row.uen] = { badge: 'ERROR', badgeClass: 'wrong', website: null, email: null, phone: null };
+      const er = document.getElementById(`er-${row.uen}`);
+      if (er) er.querySelector('.enrich-status').textContent = 'error';
+      console.warn('Enrich error for', row.uen, e.message);
     }
 
-    await sleep(800); // Rate limit respect
+    await sleep(800);
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
