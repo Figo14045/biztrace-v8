@@ -1171,6 +1171,26 @@ function densityTier(row) {
   return { tier, count };
 }
 
+// Given selected tiers like ['HUB', 'LIKELY'], return the Set of postal codes
+// that contain ANY unit matching those tiers. Used as a server-side prefilter
+// before client-side level+unit refinement.
+function postalsMatchingTiers(tiers) {
+  const out = new Set();
+  const wantHub    = tiers.includes('HUB');
+  const wantLikely = tiers.includes('LIKELY');
+  const wantShared = tiers.includes('SHARED');
+  const wantNone   = tiers.includes('NONE');
+  for (const [key, count] of addressDensity.entries()) {
+    const postal = key.split('|')[0];
+    if (!postal) continue;
+    if (count >= 100 && wantHub)                            out.add(postal);
+    else if (count >= 30 && count < 100 && wantLikely)      out.add(postal);
+    else if (count >= 10 && count < 30 && wantShared)       out.add(postal);
+    else if (count < 10 && wantNone)                        out.add(postal);
+  }
+  return out;
+}
+
 async function loadDbCount() {
   const r = await sbHead('companies', {});
   if (r.count !== null) {
@@ -1398,7 +1418,23 @@ let columnFilters = {};
 // override sidebar filters for the same DB column.
 function applyColumnFilters(p) {
   for (const [col, f] of Object.entries(columnFilters)) {
-    if (col === 'virtual_office') continue;  // handled client-side in renderTable
+    if (col === 'virtual_office') {
+      // Server-side prefilter: restrict to postal codes that contain matching
+      // density tiers. Client-side refinement (level+unit) happens in renderTable.
+      if (f.values && f.values.length) {
+        const postals = postalsMatchingTiers(f.values);
+        if (postals.size === 0) {
+          // No matching postals — return impossible query so server returns 0 rows
+          p['uen'] = 'eq.__NO_MATCH__';
+        } else if (postals.size <= 200) {
+          // Use IN list — efficient for small sets
+          p['postal_code'] = `in.(${[...postals].map(s => `"${s}"`).join(',')})`;
+        }
+        // For >200 postals we skip server-side filter and rely on client-side
+        // (rare in practice — would require selecting many tiers across many buildings)
+      }
+      continue;
+    }
     if (col === 'uen_of_audit_firm1') {
       // Auditor is a yes/no: filter by has_auditor column
       if (f.auditor === 'yes')  p['has_auditor'] = 'eq.true';
@@ -1520,6 +1556,19 @@ function openColMenu(event, col, kind) {
     let options = [];
     if (kind === 'vo') {
       options = ['HUB', 'LIKELY', 'SHARED', 'NONE'];
+      if (addressDensity.size === 0) {
+        html += `<div class="col-dd-section">
+          <div class="col-dd-label">Filter — Virtual Office</div>
+          <div style="padding:8px;color:var(--amber);font-size:11px">⏳ Address density still loading… please wait a moment and reopen this menu.</div>
+        </div>`;
+        // Skip the rest of values rendering
+        html += `<div class="col-dd-buttons">
+          <button class="col-dd-btn secondary" onclick="closeColMenu()">Close</button>
+        </div>`;
+        dd.innerHTML = html;
+        document.body.appendChild(dd);
+        return;
+      }
     } else {
       options = filterOptions[col] || [];
     }
