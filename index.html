@@ -416,13 +416,159 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
-  cursor: pointer;
   user-select: none;
   z-index: 10;
 }
-#data-table thead th:hover { color: var(--text2); }
-#data-table thead th.sorted { color: var(--accent2); }
 #data-table thead th:first-child { width: 36px; cursor: default; }
+
+/* Column header inner layout: label + icon group */
+.col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.col-head.has-filter { color: var(--accent2); }
+.col-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.col-sort {
+  font-size: 10px;
+  color: var(--accent2);
+  min-width: 8px;
+}
+.col-menu {
+  font-size: 11px;
+  color: var(--text3);
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.col-menu:hover { background: rgba(59,130,246,0.15); color: var(--accent2); }
+.col-menu.active { background: var(--accent); color: white; }
+
+/* Column dropdown menu */
+.col-dropdown {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  z-index: 1000;
+  min-width: 240px;
+  max-width: 320px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px;
+}
+.col-dd-section {
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+}
+.col-dd-section:last-child { border-bottom: none; }
+.col-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: var(--text2);
+  letter-spacing: 0.04em;
+}
+.col-dd-item:hover { background: rgba(59,130,246,0.1); color: var(--text); }
+.col-dd-item.disabled { opacity: 0.4; cursor: not-allowed; }
+.col-dd-item.disabled:hover { background: transparent; color: var(--text2); }
+.col-dd-label {
+  font-size: 9px;
+  color: var(--text3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 8px 2px;
+}
+.col-dd-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin: 4px 0;
+}
+.col-dd-input:focus { outline: none; border-color: var(--accent); }
+.col-dd-row {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0;
+}
+.col-dd-row .col-dd-input { margin: 0; }
+.col-dd-values {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  margin: 4px 0;
+}
+.col-dd-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.col-dd-value:hover { background: rgba(59,130,246,0.1); }
+.col-dd-value input { accent-color: var(--accent); width: 12px; height: 12px; }
+.col-dd-value label { flex: 1; cursor: pointer; color: var(--text2); }
+.col-dd-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.col-dd-btn {
+  flex: 1;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.col-dd-btn:hover { background: var(--accent2); }
+.col-dd-btn.secondary { background: var(--border2); }
+.col-dd-btn.secondary:hover { background: var(--border); }
+
+/* Advanced sidebar filter visibility */
+.advanced-only { display: none; }
+body.show-advanced .advanced-only { display: block; }
+#advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  cursor: pointer;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+#advanced-toggle:hover { color: var(--text2); border-color: var(--border2); }
+#advanced-toggle input { accent-color: var(--accent); }
 
 #data-table tbody tr {
   border-bottom: 1px solid var(--border);
@@ -668,6 +814,11 @@ body {
     </div>
     <div id="sidebar-body">
 
+      <label id="advanced-toggle" title="Show filters that duplicate the column-header filters">
+        <input type="checkbox" id="advanced-cb" onchange="document.body.classList.toggle('show-advanced', this.checked)">
+        Show advanced sidebar filters
+      </label>
+
       <!-- Address -->
       <div class="filter-group" id="fg-address">
         <div class="filter-group-header" onclick="toggleGroup('fg-address')">
@@ -688,7 +839,7 @@ body {
       </div>
 
       <!-- Entity Status -->
-      <div class="filter-group" id="fg-status">
+      <div class="filter-group advanced-only" id="fg-status">
         <div class="filter-group-header" onclick="toggleGroup('fg-status')">
           <span class="filter-group-label">Status</span>
           <span class="filter-group-chevron">▾</span>
@@ -699,7 +850,7 @@ body {
       </div>
 
       <!-- Entity Type -->
-      <div class="filter-group" id="fg-type">
+      <div class="filter-group advanced-only" id="fg-type">
         <div class="filter-group-header" onclick="toggleGroup('fg-type')">
           <span class="filter-group-label">Entity Type</span>
           <span class="filter-group-chevron">▾</span>
@@ -710,7 +861,7 @@ body {
       </div>
 
       <!-- Company Type -->
-      <div class="filter-group collapsed" id="fg-ctype">
+      <div class="filter-group collapsed advanced-only" id="fg-ctype">
         <div class="filter-group-header" onclick="toggleGroup('fg-ctype')">
           <span class="filter-group-label">Company Type</span>
           <span class="filter-group-chevron">▾</span>
@@ -721,7 +872,7 @@ body {
       </div>
 
       <!-- SSIC -->
-      <div class="filter-group collapsed" id="fg-ssic">
+      <div class="filter-group collapsed advanced-only" id="fg-ssic">
         <div class="filter-group-header" onclick="toggleGroup('fg-ssic')">
           <span class="filter-group-label">Industry (SSIC)</span>
           <span class="filter-group-chevron">▾</span>
@@ -776,7 +927,7 @@ body {
       </div>
 
       <!-- Size -->
-      <div class="filter-group collapsed" id="fg-size">
+      <div class="filter-group collapsed advanced-only" id="fg-size">
         <div class="filter-group-header" onclick="toggleGroup('fg-size')">
           <span class="filter-group-label">Company Size</span>
           <span class="filter-group-chevron">▾</span>
@@ -800,7 +951,7 @@ body {
       </div>
 
       <!-- Virtual Office -->
-      <div class="filter-group collapsed" id="fg-vo">
+      <div class="filter-group collapsed advanced-only" id="fg-vo">
         <div class="filter-group-header" onclick="toggleGroup('fg-vo')">
           <span class="filter-group-label">Virtual Office</span>
           <span class="filter-group-chevron">▾</span>
@@ -821,7 +972,7 @@ body {
       </div>
 
       <!-- Name search -->
-      <div class="filter-group collapsed" id="fg-name">
+      <div class="filter-group collapsed advanced-only" id="fg-name">
         <div class="filter-group-header" onclick="toggleGroup('fg-name')">
           <span class="filter-group-label">Company Name</span>
           <span class="filter-group-chevron">▾</span>
@@ -866,18 +1017,18 @@ body {
         <thead>
           <tr>
             <th><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this)" style="accent-color:var(--accent)"></th>
-            <th onclick="sortBy('uen')">UEN</th>
-            <th onclick="sortBy('entity_name')">Company Name</th>
-            <th onclick="sortBy('entity_status_description')">Status</th>
-            <th onclick="sortBy('entity_type_description')">Type</th>
-            <th onclick="sortBy('primary_ssic_description')">Industry</th>
-            <th onclick="sortBy('postal_code')">Postal</th>
-            <th onclick="sortBy('level_no')">Level</th>
-            <th onclick="sortBy('unit_no')">Unit</th>
-            <th onclick="sortBy('annual_return_date')">Ann. Return</th>
-            <th onclick="sortBy('no_of_officers')">Officers</th>
-            <th>Auditor</th>
-            <th title="Address density — companies sharing the same postal/level/unit">Virtual Office</th>
+            <th><div class="col-head" data-col="uen">UEN <span class="col-icons"><span class="col-sort" id="sortind-uen"></span><span class="col-menu" onclick="openColMenu(event,'uen','text')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="entity_name">Company Name <span class="col-icons"><span class="col-sort" id="sortind-entity_name"></span><span class="col-menu" onclick="openColMenu(event,'entity_name','text')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="entity_status_description">Status <span class="col-icons"><span class="col-sort" id="sortind-entity_status_description"></span><span class="col-menu" onclick="openColMenu(event,'entity_status_description','values')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="entity_type_description">Type <span class="col-icons"><span class="col-sort" id="sortind-entity_type_description"></span><span class="col-menu" onclick="openColMenu(event,'entity_type_description','values')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="primary_ssic_description">Industry <span class="col-icons"><span class="col-sort" id="sortind-primary_ssic_description"></span><span class="col-menu" onclick="openColMenu(event,'primary_ssic_description','ssic')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="postal_code">Postal <span class="col-icons"><span class="col-sort" id="sortind-postal_code"></span><span class="col-menu" onclick="openColMenu(event,'postal_code','text')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="level_no">Level <span class="col-icons"><span class="col-sort" id="sortind-level_no"></span><span class="col-menu" onclick="openColMenu(event,'level_no','text')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="unit_no">Unit <span class="col-icons"><span class="col-sort" id="sortind-unit_no"></span><span class="col-menu" onclick="openColMenu(event,'unit_no','text')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="annual_return_date">Ann. Return <span class="col-icons"><span class="col-sort" id="sortind-annual_return_date"></span><span class="col-menu" onclick="openColMenu(event,'annual_return_date','date')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="no_of_officers">Officers <span class="col-icons"><span class="col-sort" id="sortind-no_of_officers"></span><span class="col-menu" onclick="openColMenu(event,'no_of_officers','number')">▾</span></span></div></th>
+            <th><div class="col-head" data-col="uen_of_audit_firm1">Auditor <span class="col-icons"><span class="col-sort" id="sortind-uen_of_audit_firm1"></span><span class="col-menu" onclick="openColMenu(event,'uen_of_audit_firm1','auditor')">▾</span></span></div></th>
+            <th title="Address density — companies sharing the same postal/level/unit"><div class="col-head" data-col="virtual_office">Virtual Office <span class="col-icons"><span class="col-sort" id="sortind-virtual_office"></span><span class="col-menu" onclick="openColMenu(event,'virtual_office','vo')">▾</span></span></div></th>
             <th>Website</th>
             <th>Contact</th>
           </tr>
@@ -942,6 +1093,7 @@ async function init() {
   loadSerpKey();
   await loadFilterOptions();
   await loadDbCount();
+  refreshSortIndicators();
   loadAddressDensity();  // async, runs in background — doesn't block UI
 }
 
@@ -1191,11 +1343,292 @@ function buildParams() {
     p['company_type_description'] = `in.(${ctypeVals.map(s => `"${s}"`).join(',')})`;
   }
 
+  // ── Merge column filters (override sidebar where both exist) ─────────────
+  applyColumnFilters(p);
+
   // Sort — PostgREST syntax is `col.dir.nullslast` (no dot between nulls and last)
-  p['order'] = `${sortCol}.${sortAsc ? 'asc' : 'desc'}.nullslast`;
+  // Virtual office sort is client-side (not a DB column) — fall back to entity_name
+  const dbSortCol = (sortCol === 'virtual_office') ? 'entity_name' : sortCol;
+  p['order'] = `${dbSortCol}.${sortAsc ? 'asc' : 'desc'}.nullslast`;
 
   return p;
 }
+
+// ══════════════════════════════════════════════════════════════
+// COLUMN FILTERS (Excel-style per-column dropdown menus)
+// ══════════════════════════════════════════════════════════════
+// State shape: { col_name: { search?, values?, min?, max?, from?, to? } }
+let columnFilters = {};
+
+// Apply column filters onto a params object (mutates p). Column filters
+// override sidebar filters for the same DB column.
+function applyColumnFilters(p) {
+  for (const [col, f] of Object.entries(columnFilters)) {
+    if (col === 'virtual_office') continue;  // handled client-side in renderTable
+    if (col === 'uen_of_audit_firm1') {
+      // Auditor is a yes/no: filter by has_auditor column
+      if (f.auditor === 'yes')  p['has_auditor'] = 'eq.true';
+      if (f.auditor === 'no')   p['has_auditor'] = 'eq.false';
+      continue;
+    }
+    if (col === 'primary_ssic_description' && f.search) {
+      p['or'] = `(primary_ssic_code.ilike.${f.search}*,primary_ssic_description.ilike.*${f.search}*)`;
+      continue;
+    }
+    if (f.search) {
+      // For numeric cols (level/unit/postal/officers) use eq, otherwise ilike
+      if (['level_no','unit_no','postal_code'].includes(col)) {
+        p[col] = `eq.${f.search}`;
+      } else {
+        p[col] = `ilike.*${f.search}*`;
+      }
+    }
+    if (f.values && f.values.length) {
+      p[col] = `in.(${f.values.map(s => `"${s}"`).join(',')})`;
+    }
+    if (f.min != null && f.min !== '') {
+      const existing = p[col] ? `${p[col]}&${col}=` : '';
+      p[col] = `${existing}gte.${f.min}`;
+    }
+    if (f.max != null && f.max !== '') {
+      const existing = p[col] ? `${p[col]}&${col}=` : '';
+      p[col] = `${existing}lte.${f.max}`;
+    }
+    if (f.from) {
+      const existing = p[col] ? `${p[col]}&${col}=` : '';
+      p[col] = `${existing}gte.${f.from}`;
+    }
+    if (f.to) {
+      const existing = p[col] ? `${p[col]}&${col}=` : '';
+      p[col] = `${existing}lte.${f.to}`;
+    }
+  }
+}
+
+// Apply virtual-office filter client-side after rows loaded
+function applyClientColumnFilters(rows) {
+  const voFilter = columnFilters['virtual_office'];
+  if (!voFilter || !voFilter.values || !voFilter.values.length) return rows;
+  return rows.filter(row => {
+    const { tier } = densityTier(row);
+    const t = tier || 'NONE';
+    return voFilter.values.includes(t);
+  });
+}
+
+// Close any open dropdown
+function closeColMenu() {
+  const dd = document.getElementById('col-dropdown');
+  if (dd) dd.remove();
+  document.querySelectorAll('.col-menu.active').forEach(el => el.classList.remove('active'));
+}
+
+// Open a column-filter dropdown
+// kind: 'text' | 'values' | 'number' | 'date' | 'ssic' | 'auditor' | 'vo'
+function openColMenu(event, col, kind) {
+  event.stopPropagation();
+  const existing = document.getElementById('col-dropdown');
+  if (existing && existing.dataset.col === col) { closeColMenu(); return; }
+  closeColMenu();
+
+  const trigger = event.currentTarget;
+  trigger.classList.add('active');
+  const rect = trigger.getBoundingClientRect();
+
+  const dd = document.createElement('div');
+  dd.id = 'col-dropdown';
+  dd.className = 'col-dropdown';
+  dd.dataset.col = col;
+  // Position below the trigger; if overflows right, shift left
+  dd.style.top  = `${rect.bottom + 4}px`;
+  dd.style.left = `${Math.min(rect.left, window.innerWidth - 340)}px`;
+
+  const current = columnFilters[col] || {};
+
+  // ── Sort section ────────────────────────────────────────────────────────
+  let html = `<div class="col-dd-section">
+    <div class="col-dd-label">Sort</div>
+    <div class="col-dd-item" onclick="applyColSort('${col}', true)">↑ Sort Ascending</div>
+    <div class="col-dd-item" onclick="applyColSort('${col}', false)">↓ Sort Descending</div>
+  </div>`;
+
+  // ── Filter section ──────────────────────────────────────────────────────
+  if (kind === 'text' || kind === 'ssic') {
+    html += `<div class="col-dd-section">
+      <div class="col-dd-label">Filter — ${kind === 'ssic' ? 'SSIC code or description' : 'contains'}</div>
+      <input class="col-dd-input" id="cf-search" placeholder="Search..." value="${esc(current.search || '')}">
+    </div>`;
+  } else if (kind === 'number') {
+    html += `<div class="col-dd-section">
+      <div class="col-dd-label">Filter — range</div>
+      <div class="col-dd-row">
+        <input class="col-dd-input" id="cf-min" type="number" placeholder="Min" value="${current.min ?? ''}">
+        <input class="col-dd-input" id="cf-max" type="number" placeholder="Max" value="${current.max ?? ''}">
+      </div>
+    </div>`;
+  } else if (kind === 'date') {
+    html += `<div class="col-dd-section">
+      <div class="col-dd-label">Filter — date range</div>
+      <div class="col-dd-row">
+        <input class="col-dd-input" id="cf-from" type="date" value="${current.from || ''}">
+        <input class="col-dd-input" id="cf-to" type="date" value="${current.to || ''}">
+      </div>
+    </div>`;
+  } else if (kind === 'auditor') {
+    const sel = current.auditor || 'any';
+    html += `<div class="col-dd-section">
+      <div class="col-dd-label">Filter</div>
+      <div class="col-dd-item" onclick="setAuditorFilter('any')">${sel==='any'?'● ':'○ '}All companies</div>
+      <div class="col-dd-item" onclick="setAuditorFilter('yes')">${sel==='yes'?'● ':'○ '}Has auditor</div>
+      <div class="col-dd-item" onclick="setAuditorFilter('no')">${sel==='no'?'● ':'○ '}No auditor</div>
+    </div>`;
+  } else if (kind === 'values' || kind === 'vo') {
+    let options = [];
+    if (kind === 'vo') {
+      options = ['HUB', 'LIKELY', 'SHARED', 'NONE'];
+    } else {
+      options = filterOptions[col] || [];
+    }
+    const checkedSet = new Set(current.values || options); // default: all checked
+    html += `<div class="col-dd-section">
+      <div class="col-dd-label">Filter — values</div>
+      <input class="col-dd-input" id="cf-vsearch" placeholder="Search values..." oninput="filterValueList(this.value)">
+      <div class="col-dd-values" id="cf-vlist">`;
+    options.filter(v => v).forEach((opt, i) => {
+      const id = `cfv-${i}`;
+      html += `<div class="col-dd-value" data-val="${esc(opt)}">
+        <input type="checkbox" id="${id}" value="${esc(opt)}" ${checkedSet.has(opt) ? 'checked' : ''}>
+        <label for="${id}" title="${esc(opt)}">${esc(opt)}</label>
+      </div>`;
+    });
+    html += `</div>
+      <div class="col-dd-row" style="margin-top:2px">
+        <button class="col-dd-btn secondary" onclick="toggleAllValues(true)">Select all</button>
+        <button class="col-dd-btn secondary" onclick="toggleAllValues(false)">Clear</button>
+      </div>
+    </div>`;
+  }
+
+  // ── Apply / Clear buttons ──────────────────────────────────────────────
+  if (kind !== 'auditor') {
+    html += `<div class="col-dd-buttons">
+      <button class="col-dd-btn" onclick="applyColFilter('${col}','${kind}')">Apply</button>
+      <button class="col-dd-btn secondary" onclick="clearColFilter('${col}')">Clear</button>
+    </div>`;
+  } else {
+    html += `<div class="col-dd-buttons">
+      <button class="col-dd-btn secondary" onclick="closeColMenu()">Close</button>
+    </div>`;
+  }
+
+  dd.innerHTML = html;
+  document.body.appendChild(dd);
+
+  // Focus first input for fast typing
+  setTimeout(() => {
+    const inp = dd.querySelector('input:not([type=checkbox]):not([type=date])');
+    if (inp) inp.focus();
+  }, 0);
+}
+
+function filterValueList(q) {
+  const lower = q.toLowerCase();
+  document.querySelectorAll('#cf-vlist .col-dd-value').forEach(el => {
+    el.style.display = el.dataset.val.toLowerCase().includes(lower) ? '' : 'none';
+  });
+}
+
+function toggleAllValues(check) {
+  document.querySelectorAll('#cf-vlist .col-dd-value:not([style*="display: none"]) input[type=checkbox]').forEach(cb => {
+    cb.checked = check;
+  });
+}
+
+function applyColSort(col, asc) {
+  sortCol = col;
+  sortAsc = asc;
+  closeColMenu();
+  refreshSortIndicators();
+  applyFilters();
+}
+
+function refreshSortIndicators() {
+  document.querySelectorAll('.col-sort').forEach(el => { el.textContent = ''; });
+  const ind = document.getElementById(`sortind-${sortCol}`);
+  if (ind) ind.textContent = sortAsc ? '↑' : '↓';
+}
+
+function applyColFilter(col, kind) {
+  const f = {};
+  if (kind === 'text' || kind === 'ssic') {
+    const s = document.getElementById('cf-search')?.value.trim();
+    if (s) f.search = s;
+  } else if (kind === 'number') {
+    const mn = document.getElementById('cf-min')?.value.trim();
+    const mx = document.getElementById('cf-max')?.value.trim();
+    if (mn !== '') f.min = mn;
+    if (mx !== '') f.max = mx;
+  } else if (kind === 'date') {
+    const fr = document.getElementById('cf-from')?.value;
+    const to = document.getElementById('cf-to')?.value;
+    if (fr) f.from = fr;
+    if (to) f.to = to;
+  } else if (kind === 'values' || kind === 'vo') {
+    const all = [...document.querySelectorAll('#cf-vlist input[type=checkbox]')];
+    const checked = all.filter(cb => cb.checked).map(cb => cb.value);
+    // If everything checked or nothing checked, treat as no filter
+    if (checked.length > 0 && checked.length < all.length) {
+      f.values = checked;
+    }
+  }
+  if (Object.keys(f).length > 0) {
+    columnFilters[col] = f;
+  } else {
+    delete columnFilters[col];
+  }
+  refreshColIndicators();
+  closeColMenu();
+  applyFilters();
+}
+
+function setAuditorFilter(val) {
+  if (val === 'any') {
+    delete columnFilters['uen_of_audit_firm1'];
+  } else {
+    columnFilters['uen_of_audit_firm1'] = { auditor: val };
+  }
+  refreshColIndicators();
+  closeColMenu();
+  applyFilters();
+}
+
+function clearColFilter(col) {
+  delete columnFilters[col];
+  refreshColIndicators();
+  closeColMenu();
+  applyFilters();
+}
+
+function refreshColIndicators() {
+  document.querySelectorAll('.col-head').forEach(el => {
+    const col = el.dataset.col;
+    if (columnFilters[col]) el.classList.add('has-filter');
+    else el.classList.remove('has-filter');
+  });
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const dd = document.getElementById('col-dropdown');
+  if (!dd) return;
+  if (!dd.contains(e.target) && !e.target.classList.contains('col-menu')) {
+    closeColMenu();
+  }
+});
+// Close dropdown on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeColMenu();
+});
 
 const SELECT_COLS = [
   'uen','entity_name','entity_status_description','entity_type_description',
@@ -1241,30 +1674,26 @@ function renderTable() {
   const tbody = document.getElementById('table-body');
   tbody.innerHTML = '';
 
-  // Apply client-side virtual office filter
-  const voFilter = document.getElementById('f-vo')?.value || 'all';
-  let rowsToShow = allResults;
-  if (voFilter !== 'all' && allResults && allResults.length) {
-    rowsToShow = allResults.filter(row => {
-      const { count } = densityTier(row);
-      switch (voFilter) {
-        case 'exclude':       return count < 10;
-        case 'exclude-hubs':  return count < 30;
-        case 'only-shared':   return count >= 10;
-        case 'only-hubs':     return count >= 30;
-        default: return true;
-      }
+  // Apply client-side virtual office filter (from column dropdown)
+  let rowsToShow = applyClientColumnFilters(allResults);
+
+  // Client-side sort for virtual_office (DB doesn't know about density)
+  if (sortCol === 'virtual_office' && rowsToShow.length) {
+    rowsToShow = [...rowsToShow].sort((a, b) => {
+      const ca = densityTier(a).count;
+      const cb = densityTier(b).count;
+      return sortAsc ? ca - cb : cb - ca;
     });
   }
 
   if (!rowsToShow.length) {
     document.getElementById('state-overlay').style.display = 'flex';
-    if (allResults.length && voFilter !== 'all') {
+    if (allResults.length && columnFilters['virtual_office']) {
       // Underlying data exists but VO filter excluded everything on this page
       document.getElementById('state-overlay').innerHTML = `
         <div class="state-icon">🏢</div>
         <div class="state-text">All ${allResults.length} rows on this page filtered out by Virtual Office filter</div>
-        <div class="state-sub">Try a different option or 'All companies' in the Virtual Office filter.</div>`;
+        <div class="state-sub">Click the ▾ next to Virtual Office column header to adjust.</div>`;
     } else {
       document.getElementById('state-overlay').innerHTML = `
         <div class="state-icon">🔍</div>
@@ -1404,7 +1833,7 @@ function updateSelectedUI() {
 function sortBy(col) {
   if (sortCol === col) sortAsc = !sortAsc;
   else { sortCol = col; sortAsc = true; }
-  document.querySelectorAll('#data-table thead th').forEach(th => th.classList.remove('sorted'));
+  refreshSortIndicators();
   fetchPage(currentPage);
 }
 
@@ -1625,6 +2054,9 @@ function clearAllFilters() {
   document.getElementById('f-auditor').checked = false;
   // Re-check all multi-selects
   document.querySelectorAll('.multi-select input[type=checkbox]').forEach(cb => cb.checked = true);
+  // Clear column filters too
+  columnFilters = {};
+  refreshColIndicators();
   showToast('Filters cleared');
 }
 
