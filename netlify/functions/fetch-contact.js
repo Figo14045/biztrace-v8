@@ -182,18 +182,36 @@ exports.handler = async function(event) {
     return {
       statusCode: 200,
       headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ badge: 'NO WEB', website: null, phone: null, email: null })
+      body: JSON.stringify({
+        badge: 'NO WEB', website: null, phone: null, email: null,
+        reason: 'serp_empty',
+        debug: { serp_count: 0, after_blocklist: 0, matched: 0, fetches_attempted: 0, fetches_ok: 0 }
+      })
     };
   }
 
   // ── Step 1: Filter out blocked domains ──────────────────────────────────
   const candidates = results.filter(r => r.link && !isBlocked(r.link));
+  const blockedDomains = results
+    .filter(r => r.link && isBlocked(r.link))
+    .map(r => getDomain(r.link));
 
   if (!candidates.length) {
     return {
       statusCode: 200,
       headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ badge: 'NO WEB', website: null, phone: null, email: null })
+      body: JSON.stringify({
+        badge: 'NO WEB', website: null, phone: null, email: null,
+        reason: 'all_blocked',
+        debug: {
+          serp_count: results.length,
+          after_blocklist: 0,
+          matched: 0,
+          fetches_attempted: 0,
+          fetches_ok: 0,
+          blocked_domains: blockedDomains
+        }
+      })
     };
   }
 
@@ -203,6 +221,10 @@ exports.handler = async function(event) {
 
   // Try matched first, then unmatched as fallback
   const ordered = [...matched, ...unmatched].slice(0, 5); // max 5 attempts
+
+  let fetchesAttempted = 0;
+  let fetchesOk = 0;
+  const attemptLog = [];
 
   for (const result of ordered) {
     const url = result.link;
@@ -214,6 +236,7 @@ exports.handler = async function(event) {
 
     // Only trust snippet contact if domain matches company
     if ((snippetPhone || snippetEmail) && domainMatchesCompany(url, name)) {
+      attemptLog.push({ url: getDomain(url), outcome: 'snippet_hit' });
       return {
         statusCode: 200,
         headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
@@ -222,20 +245,35 @@ exports.handler = async function(event) {
           website: url,
           phone:   snippetPhone,
           email:   snippetEmail,
-          source:  'snippet'
+          source:  'snippet',
+          reason:  'ok_snippet',
+          debug: {
+            serp_count: results.length,
+            after_blocklist: candidates.length,
+            matched: matched.length,
+            fetches_attempted: fetchesAttempted,
+            fetches_ok: fetchesOk,
+            attempts: attemptLog
+          }
         })
       };
     }
 
     // ── Step 4: Fetch the page ────────────────────────────────────────────
+    fetchesAttempted++;
     const html = await fetchPage(url);
-    if (!html) continue;
+    if (!html) {
+      attemptLog.push({ url: getDomain(url), outcome: 'fetch_failed' });
+      continue;
+    }
+    fetchesOk++;
 
     const phone = extractPhone(html);
     const email = extractEmail(html);
 
     if (phone || email) {
       const badge = getBadge(html, uen, name);
+      attemptLog.push({ url: getDomain(url), outcome: 'page_hit', badge });
       return {
         statusCode: 200,
         headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
@@ -244,7 +282,16 @@ exports.handler = async function(event) {
           website: url,
           phone,
           email,
-          source: 'page'
+          source: 'page',
+          reason: 'ok_page',
+          debug: {
+            serp_count: results.length,
+            after_blocklist: candidates.length,
+            matched: matched.length,
+            fetches_attempted: fetchesAttempted,
+            fetches_ok: fetchesOk,
+            attempts: attemptLog
+          }
         })
       };
     }
@@ -252,6 +299,7 @@ exports.handler = async function(event) {
     // Found the right site but no contact info — still report the website
     if (domainMatchesCompany(url, name)) {
       const badge = getBadge(html, uen, name);
+      attemptLog.push({ url: getDomain(url), outcome: 'page_no_contact', badge });
       return {
         statusCode: 200,
         headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
@@ -260,16 +308,44 @@ exports.handler = async function(event) {
           website: url,
           phone:   null,
           email:   null,
-          source:  'page'
+          source:  'page',
+          reason:  'ok_no_contact',
+          debug: {
+            serp_count: results.length,
+            after_blocklist: candidates.length,
+            matched: matched.length,
+            fetches_attempted: fetchesAttempted,
+            fetches_ok: fetchesOk,
+            attempts: attemptLog
+          }
         })
       };
     }
+
+    // Page fetched but no contact AND domain doesn't match — log and continue
+    attemptLog.push({ url: getDomain(url), outcome: 'no_match_no_contact' });
   }
 
-  // Nothing found
+  // Nothing found — explain why
+  let reason = 'no_match';
+  if (fetchesAttempted === 0) reason = 'snippet_only_no_match';
+  else if (fetchesOk === 0) reason = 'all_fetches_failed';
+  else if (matched.length === 0) reason = 'no_domain_matched_company_name';
+
   return {
     statusCode: 200,
     headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ badge: 'NO WEB', website: null, phone: null, email: null })
+    body: JSON.stringify({
+      badge: 'NO WEB', website: null, phone: null, email: null,
+      reason,
+      debug: {
+        serp_count: results.length,
+        after_blocklist: candidates.length,
+        matched: matched.length,
+        fetches_attempted: fetchesAttempted,
+        fetches_ok: fetchesOk,
+        attempts: attemptLog
+      }
+    })
   };
 };

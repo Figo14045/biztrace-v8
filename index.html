@@ -90,6 +90,8 @@ body {
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
+  height: 100%;       /* anchor for flex children */
+  min-height: 0;      /* allow children to shrink below content size */
 }
 #sidebar-header {
   padding: 10px 14px;
@@ -120,14 +122,17 @@ body {
 #clear-filters-btn:hover { background: rgba(239,68,68,0.1); }
 
 #sidebar-body {
-  flex: 1;
-  overflow-y: scroll;
+  flex: 1 1 0;
+  overflow-y: auto;
   overflow-x: hidden;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   min-height: 0; /* critical — allows flex child to shrink and scroll */
+  overscroll-behavior: contain;     /* don't propagate wheel to body */
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;         /* keep layout stable when scrollbar appears */
 }
 #sidebar-body::-webkit-scrollbar { width: 4px; }
 #sidebar-body::-webkit-scrollbar-track { background: transparent; }
@@ -456,6 +461,9 @@ body {
 .badge-likely  { background: rgba(245,158,11,0.15); color: var(--amber);  border: 1px solid rgba(245,158,11,0.3); font-size:9px; }
 .badge-unver   { background: rgba(100,116,139,0.15);color: var(--text3);  border: 1px solid rgba(100,116,139,0.3);font-size:9px; }
 .badge-wrong   { background: rgba(239,68,68,0.15);  color: var(--red);    border: 1px solid rgba(239,68,68,0.3); font-size:9px; }
+.badge-vo-hub    { background: rgba(168,85,247,0.18); color: var(--purple); border: 1px solid rgba(168,85,247,0.4); font-size:9px; }
+.badge-vo-likely { background: rgba(245,158,11,0.15); color: var(--amber);  border: 1px solid rgba(245,158,11,0.3); font-size:9px; }
+.badge-vo-shared { background: rgba(100,116,139,0.15);color: var(--text3);  border: 1px solid rgba(100,116,139,0.3);font-size:9px; }
 
 /* Pagination */
 #pagination {
@@ -791,6 +799,27 @@ body {
         </div>
       </div>
 
+      <!-- Virtual Office -->
+      <div class="filter-group collapsed" id="fg-vo">
+        <div class="filter-group-header" onclick="toggleGroup('fg-vo')">
+          <span class="filter-group-label">Virtual Office</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:4px">
+            Filters this page after load.<br>
+            Based on companies sharing the same postal+level+unit.
+          </div>
+          <select class="filter-input" id="f-vo" onchange="renderTable()">
+            <option value="all">All companies</option>
+            <option value="exclude">Exclude virtual office (count ≥ 10)</option>
+            <option value="exclude-hubs">Exclude hubs only (count ≥ 30)</option>
+            <option value="only-shared">Only shared addresses (count ≥ 10)</option>
+            <option value="only-hubs">Only hubs (count ≥ 30)</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Name search -->
       <div class="filter-group collapsed" id="fg-name">
         <div class="filter-group-header" onclick="toggleGroup('fg-name')">
@@ -848,6 +877,7 @@ body {
             <th onclick="sortBy('annual_return_date')">Ann. Return</th>
             <th onclick="sortBy('no_of_officers')">Officers</th>
             <th>Auditor</th>
+            <th title="Address density — companies sharing the same postal/level/unit">Virtual Office</th>
             <th>Website</th>
             <th>Contact</th>
           </tr>
@@ -903,6 +933,7 @@ let sortAsc      = true;
 let selected     = new Set();
 let enrichData   = {};   // uen → {website, phone, email, badge}
 let filterOptions = {};  // populated from DB distinct values
+let addressDensity = new Map();  // "postal|level|unit" → count of companies sharing that exact unit
 
 // ══════════════════════════════════════════════════════════════
 // INIT
@@ -911,6 +942,69 @@ async function init() {
   loadSerpKey();
   await loadFilterOptions();
   await loadDbCount();
+  loadAddressDensity();  // async, runs in background — doesn't block UI
+}
+
+// ══════════════════════════════════════════════════════════════
+// VIRTUAL OFFICE / ADDRESS DENSITY DETECTION
+// ══════════════════════════════════════════════════════════════
+// Computes how many companies share each exact (postal, level, unit) tuple.
+// High density = likely virtual office / corporate secretary hub.
+//
+// TODO: For full ~1M dataset, replace client-side aggregation with a
+// Postgres VIEW (e.g. CREATE VIEW address_density AS SELECT postal_code,
+// level_no, unit_no, COUNT(*) FROM companies WHERE entity_status_description
+// IN ('Live','Live Company') GROUP BY 1,2,3) and query the view directly.
+async function loadAddressDensity() {
+  try {
+    const PAGE = 1000;
+    let page = 0;
+    let total = 0;
+    const map = new Map();
+    while (true) {
+      const from = page * PAGE;
+      const to   = from + PAGE - 1;
+      const url = `${SUPABASE_URL}/rest/v1/companies?select=postal_code,level_no,unit_no`;
+      const r = await fetch(url, {
+        headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${from}-${to}` }
+      });
+      if (!r.ok) { console.warn('addressDensity fetch failed at page', page); break; }
+      const rows = await r.json();
+      if (!Array.isArray(rows) || rows.length === 0) break;
+      for (const row of rows) {
+        if (!row.postal_code) continue;  // skip companies without a postal code
+        const key = `${row.postal_code}|${row.level_no || ''}|${row.unit_no || ''}`;
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+      total += rows.length;
+      if (rows.length < PAGE) break;
+      page++;
+      if (page > 1500) break; // safety cap (~1.5M rows)
+    }
+    addressDensity = map;
+    console.log(`addressDensity loaded: ${map.size} unique units across ${total} rows`);
+    // Re-render table if results already on screen so the column populates
+    if (allResults && allResults.length) renderTable();
+  } catch (e) {
+    console.warn('loadAddressDensity error:', e);
+  }
+}
+
+// Return density tier for a given row.
+// Tiers:
+//   HUB     ≥100 companies at unit → near-certain virtual office hub (CSP)
+//   LIKELY  30–99                  → very likely virtual office
+//   SHARED  10–29                  → shared address (small co-work / family of holdings)
+//   ''      <10                    → no signal
+function densityTier(row) {
+  if (!row.postal_code) return { tier: '', count: 0 };
+  const key = `${row.postal_code}|${row.level_no || ''}|${row.unit_no || ''}`;
+  const count = addressDensity.get(key) || 0;
+  let tier = '';
+  if (count >= 100)      tier = 'HUB';
+  else if (count >= 30)  tier = 'LIKELY';
+  else if (count >= 10)  tier = 'SHARED';
+  return { tier, count };
 }
 
 async function loadDbCount() {
@@ -1147,21 +1241,50 @@ function renderTable() {
   const tbody = document.getElementById('table-body');
   tbody.innerHTML = '';
 
-  if (!allResults.length) {
+  // Apply client-side virtual office filter
+  const voFilter = document.getElementById('f-vo')?.value || 'all';
+  let rowsToShow = allResults;
+  if (voFilter !== 'all' && allResults && allResults.length) {
+    rowsToShow = allResults.filter(row => {
+      const { count } = densityTier(row);
+      switch (voFilter) {
+        case 'exclude':       return count < 10;
+        case 'exclude-hubs':  return count < 30;
+        case 'only-shared':   return count >= 10;
+        case 'only-hubs':     return count >= 30;
+        default: return true;
+      }
+    });
+  }
+
+  if (!rowsToShow.length) {
     document.getElementById('state-overlay').style.display = 'flex';
-    document.getElementById('state-overlay').innerHTML = `
-      <div class="state-icon">🔍</div>
-      <div class="state-text">No results found</div>
-      <div class="state-sub">Try adjusting your filters.</div>`;
+    if (allResults.length && voFilter !== 'all') {
+      // Underlying data exists but VO filter excluded everything on this page
+      document.getElementById('state-overlay').innerHTML = `
+        <div class="state-icon">🏢</div>
+        <div class="state-text">All ${allResults.length} rows on this page filtered out by Virtual Office filter</div>
+        <div class="state-sub">Try a different option or 'All companies' in the Virtual Office filter.</div>`;
+    } else {
+      document.getElementById('state-overlay').innerHTML = `
+        <div class="state-icon">🔍</div>
+        <div class="state-text">No results found</div>
+        <div class="state-sub">Try adjusting your filters.</div>`;
+    }
     document.getElementById('data-table').style.display = 'none';
     document.getElementById('pagination').style.display = 'none';
     return;
   }
 
-  allResults.forEach(row => {
+  rowsToShow.forEach(row => {
     const tr = document.createElement('tr');
     if (selected.has(row.uen)) tr.classList.add('selected');
     const enr = enrichData[row.uen] || {};
+
+    const vo = densityTier(row);
+    const voCell = vo.tier
+      ? `<span class="badge badge-vo-${vo.tier.toLowerCase()}" title="${vo.count} companies share this exact unit">${vo.tier} (${vo.count})</span>`
+      : '—';
 
     tr.innerHTML = `
       <td><input type="checkbox" ${selected.has(row.uen)?'checked':''} onchange="toggleRow('${row.uen}',this)" style="accent-color:var(--accent)"></td>
@@ -1176,6 +1299,7 @@ function renderTable() {
       <td class="addr-col" style="${isOverdue(row.annual_return_date)?'color:var(--red)':''}">${fmt(row.annual_return_date)}</td>
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
       <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
+      <td>${voCell}</td>
       <td>${enr.website ? `<a href="${enr.website}" target="_blank" style="color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px" title="${enr.website}">${enr.website.replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0]}</a>` : '—'}</td>
       <td>${enr.badge && enr.badge !== 'ERROR' ? `<span class="badge badge-${enr.badgeClass}">${enr.badge}</span>${enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : ''}${enr.email ? ` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>` : ''}` : '—'}</td>
     `;
