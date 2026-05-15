@@ -1113,10 +1113,12 @@ async function loadAddressDensity() {
     let page = 0;
     let total = 0;
     const map = new Map();
+    const typeSet  = new Set();
+    const ctypeSet = new Set();
     while (true) {
       const from = page * PAGE;
       const to   = from + PAGE - 1;
-      const url = `${SUPABASE_URL}/rest/v1/companies?select=postal_code,level_no,unit_no`;
+      const url = `${SUPABASE_URL}/rest/v1/companies?select=postal_code,level_no,unit_no,entity_type_description,company_type_description`;
       const r = await fetch(url, {
         headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${from}-${to}` }
       });
@@ -1124,9 +1126,12 @@ async function loadAddressDensity() {
       const rows = await r.json();
       if (!Array.isArray(rows) || rows.length === 0) break;
       for (const row of rows) {
-        if (!row.postal_code) continue;  // skip companies without a postal code
-        const key = `${row.postal_code}|${row.level_no || ''}|${row.unit_no || ''}`;
-        map.set(key, (map.get(key) || 0) + 1);
+        if (row.postal_code) {
+          const key = `${row.postal_code}|${row.level_no || ''}|${row.unit_no || ''}`;
+          map.set(key, (map.get(key) || 0) + 1);
+        }
+        if (row.entity_type_description)  typeSet.add(row.entity_type_description);
+        if (row.company_type_description) ctypeSet.add(row.company_type_description);
       }
       total += rows.length;
       if (rows.length < PAGE) break;
@@ -1134,7 +1139,14 @@ async function loadAddressDensity() {
       if (page > 1500) break; // safety cap (~1.5M rows)
     }
     addressDensity = map;
-    console.log(`addressDensity loaded: ${map.size} unique units across ${total} rows`);
+    // Update filterOptions with the complete distinct sets we just gathered
+    const typeVals  = [...typeSet].sort();
+    const ctypeVals = [...ctypeSet].sort();
+    filterOptions['entity_type_description']  = typeVals;
+    filterOptions['company_type_description'] = ctypeVals;
+    buildMultiSelect('ms-type',  typeVals);
+    buildMultiSelect('ms-ctype', ctypeVals);
+    console.log(`Full-table scan done: ${map.size} unique units, ${typeVals.length} entity types, ${ctypeVals.length} company types across ${total} rows`);
     // Re-render table if results already on screen so the column populates
     if (allResults && allResults.length) renderTable();
   } catch (e) {
@@ -1182,13 +1194,12 @@ async function loadFilterOptions() {
   filterOptions['entity_status_description'] = knownStatuses;
   buildMultiSelect('ms-status', knownStatuses);
 
-  // Load entity type and company type from DB
-  const typeVals  = await sbDistinct('entity_type_description');
-  const ctypeVals = await sbDistinct('company_type_description');
-  filterOptions['entity_type_description']  = typeVals;
-  filterOptions['company_type_description'] = ctypeVals;
-  buildMultiSelect('ms-type',  typeVals);
-  buildMultiSelect('ms-ctype', ctypeVals);
+  // Entity type and company type are populated by loadAddressDensity (full-table scan)
+  // Initialize with empty arrays so the multi-selects render placeholders meanwhile
+  filterOptions['entity_type_description']  = [];
+  filterOptions['company_type_description'] = [];
+  buildMultiSelect('ms-type',  []);
+  buildMultiSelect('ms-ctype', []);
 }
 
 function buildMultiSelect(elId, values) {
@@ -1266,11 +1277,34 @@ async function sbHead(table, params) {
   return { count: isNaN(count) ? null : count };
 }
 
+// Get all distinct values of a column. Paginates through the full table because
+// PostgREST has no SELECT DISTINCT and a simple ?limit=500 sample misses values
+// that only appear later in the dataset.
 async function sbDistinct(col) {
-  const url = `${SUPABASE_URL}/rest/v1/companies?select=${col}&limit=500`;
-  const r = await fetch(url, { headers: SB_HEADERS });
-  const data = await r.json();
-  return [...new Set(data.map(d => d[col]).filter(Boolean))];
+  const PAGE = 1000;
+  const seen = new Set();
+  let offset = 0;
+  let safety = 1500;  // hard cap ~1.5M rows
+  while (safety-- > 0) {
+    const from = offset;
+    const to   = offset + PAGE - 1;
+    const url = `${SUPABASE_URL}/rest/v1/companies?select=${col}`;
+    const r = await fetch(url, {
+      headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${from}-${to}` }
+    });
+    if (!r.ok) {
+      console.warn(`sbDistinct(${col}) failed at offset ${offset}`, r.status);
+      break;
+    }
+    const data = await r.json();
+    if (!Array.isArray(data) || data.length === 0) break;
+    for (const row of data) {
+      if (row[col]) seen.add(row[col]);
+    }
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
+  return [...seen].sort();
 }
 
 // Build PostgREST filter params from UI
