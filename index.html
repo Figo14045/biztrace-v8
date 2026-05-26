@@ -826,6 +826,9 @@ body.show-advanced .advanced-only { display: block; }
           <span class="filter-group-chevron">▾</span>
         </div>
         <div class="filter-group-body">
+          <textarea class="filter-input" id="f-smart-addr" rows="2" placeholder="Paste full address — e.g. 10 Anson Rd #15-12 Singapore 079903" style="resize:vertical;font-family:var(--mono);font-size:11px"></textarea>
+          <div id="smart-addr-preview" style="font-size:10px;color:var(--text3);font-family:var(--mono);margin:2px 0 6px;min-height:14px"></div>
+          <div style="font-size:9px;color:var(--text3);letter-spacing:0.08em;text-transform:uppercase;margin:4px 0 2px">Or fill manually</div>
           <input class="filter-input" id="f-postal" placeholder="Postal code (e.g. 038987)" maxlength="6">
           <input class="filter-input" id="f-building" placeholder="Building name">
           <input class="filter-input" id="f-street" placeholder="Street name">
@@ -1094,7 +1097,111 @@ async function init() {
   await loadFilterOptions();
   await loadDbCount();
   refreshSortIndicators();
+  setupSmartAddress();
   loadAddressDensity();  // async, runs in background — doesn't block UI
+}
+
+// ══════════════════════════════════════════════════════════════
+// SMART ADDRESS PARSER
+// ══════════════════════════════════════════════════════════════
+// Accepts a free-text Singapore address and extracts postal/level/unit/
+// street/building into the existing filter fields. Designed for common
+// formats:
+//   "10 Anson Road #15-12 Singapore 079903"
+//   "Blk 123 Jurong East Street 13 #04-456 S(600123)"
+//   "1 Raffles Place Level 20 Singapore 048616"
+//   "409051"     → postal only
+//   "#08-43"     → level/unit only
+function parseAddress(input) {
+  if (!input || !input.trim()) return {};
+  let s = ' ' + input.replace(/\s+/g, ' ').trim() + ' ';
+  const out = {};
+
+  // 1) Postal code — prefer postal preceded by S/SG/Singapore/(
+  const postalRx = /(?:S\(?|SG\s|Singapore\s|\s)(\d{6})\)?/i;
+  let m = s.match(postalRx);
+  if (m) {
+    out.postal = m[1];
+    s = s.replace(m[0], ' ');
+  } else {
+    m = s.match(/\b(\d{6})\b/);
+    if (m) { out.postal = m[1]; s = s.replace(m[0], ' '); }
+  }
+
+  // 2) Combined unit pattern: #XX-YYY
+  m = s.match(/#(\d{1,3})[-\s]?(\d{1,4}[A-Z]?)/i);
+  if (m) {
+    out.level = m[1];
+    out.unit  = m[2];
+    s = s.replace(m[0], ' ');
+  } else {
+    // Separate Level / Floor patterns
+    const lm = s.match(/\b(?:Level|Lvl|L\.|Floor|Flr)\s*(\d{1,3})\b/i);
+    if (lm) { out.level = lm[1]; s = s.replace(lm[0], ' '); }
+    const um = s.match(/\bUnit\s*(\d{1,3}[-\s]?\d{0,4}[A-Z]?)\b/i);
+    if (um) {
+      const v = um[1].replace(/\s/g, '');
+      if (v.includes('-')) {
+        const [l, u] = v.split('-');
+        out.level = out.level || l;
+        out.unit = u;
+      } else {
+        out.unit = v;
+      }
+      s = s.replace(um[0], ' ');
+    }
+  }
+
+  // 3) Whatever remains → building + street (split on comma if present)
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s) {
+    if (s.includes(',')) {
+      const parts = s.split(',').map(p => p.trim()).filter(Boolean);
+      out.street = parts[0];
+      if (parts.length >= 2) out.building = parts.slice(1).join(', ');
+    } else {
+      out.street = s;
+    }
+  }
+  return out;
+}
+
+// Build a short human-readable preview of parsed result
+function previewParsed(p) {
+  const bits = [];
+  if (p.postal)   bits.push(`Postal: ${p.postal}`);
+  if (p.level)    bits.push(`Lvl: ${p.level}`);
+  if (p.unit)     bits.push(`Unit: ${p.unit}`);
+  if (p.street)   bits.push(`Street: ${truncate(p.street, 25)}`);
+  if (p.building) bits.push(`Building: ${truncate(p.building, 25)}`);
+  return bits.length ? `Detected → ${bits.join(' · ')}` : '';
+}
+
+// Debounced live-parsing on input
+let smartAddrTimer = null;
+function setupSmartAddress() {
+  const ta = document.getElementById('f-smart-addr');
+  const preview = document.getElementById('smart-addr-preview');
+  if (!ta || !preview) return;
+  ta.addEventListener('input', () => {
+    clearTimeout(smartAddrTimer);
+    smartAddrTimer = setTimeout(() => {
+      const parsed = parseAddress(ta.value);
+      // Populate individual fields (only if user hasn't manually typed there)
+      // We always overwrite — manual edits below are still allowed before Apply
+      document.getElementById('f-postal').value   = parsed.postal   || '';
+      document.getElementById('f-level').value    = parsed.level    || '';
+      document.getElementById('f-unit').value     = parsed.unit     || '';
+      document.getElementById('f-street').value   = parsed.street   || '';
+      document.getElementById('f-building').value = parsed.building || '';
+      preview.textContent = previewParsed(parsed);
+      preview.style.color = ta.value.trim() && !Object.keys(parsed).length
+        ? 'var(--amber)' : 'var(--text3)';
+      if (ta.value.trim() && !Object.keys(parsed).length) {
+        preview.textContent = '⚠ Could not parse — try filling fields manually below';
+      }
+    }, 200);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2118,6 +2225,8 @@ function toggleGroup(id) {
 }
 
 function clearAllFilters() {
+  document.getElementById('f-smart-addr').value = '';
+  document.getElementById('smart-addr-preview').textContent = '';
   document.getElementById('f-postal').value = '';
   document.getElementById('f-building').value = '';
   document.getElementById('f-street').value = '';
