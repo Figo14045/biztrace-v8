@@ -66,12 +66,57 @@ function extractKeywords(name) {
     .filter(w => w.length > 2 && !stopwords.has(w));
 }
 
-// Check if a domain plausibly belongs to the company
-function domainMatchesCompany(url, companyName) {
-  const domain = getDomain(url);
+// Generate alternate name forms for fuzzy domain matching.
+// "Lim Wei Jie Dental Surgery Pte Ltd" → ["limweijie", "lwj", "limweijiedental", "weijiedental"]
+function nameVariants(companyName) {
   const keywords = extractKeywords(companyName);
-  // At least one keyword must appear in the domain
-  return keywords.some(kw => domain.includes(kw));
+  const variants = new Set();
+  // Full collapsed name
+  variants.add(keywords.join(''));
+  // Initials
+  if (keywords.length >= 2) variants.add(keywords.map(k => k[0]).join(''));
+  // First two words joined
+  if (keywords.length >= 2) variants.add(keywords[0] + keywords[1]);
+  // Last two words joined (often the "brand" part — e.g. "wei jie dental")
+  if (keywords.length >= 3) variants.add(keywords.slice(-2).join(''));
+  // Each individual keyword (the original strategy)
+  for (const k of keywords) variants.add(k);
+  // Drop variants shorter than 3 chars (too prone to false positives)
+  return [...variants].filter(v => v.length >= 3);
+}
+
+// Check how strongly a domain matches the company name. Returns an integer score:
+//   2 = strong match (collapsed name or initials present)
+//   1 = weak match (single keyword present)
+//   0 = no match
+function domainMatchStrength(url, companyName) {
+  const domain = getDomain(url);
+  if (!domain) return 0;
+  const keywords = extractKeywords(companyName);
+  const variants = nameVariants(companyName);
+
+  // Strong: full collapsed name (e.g. "limweijie") in domain
+  const collapsed = keywords.join('');
+  if (collapsed.length >= 4 && domain.includes(collapsed)) return 2;
+
+  // Strong: initials match (e.g. "lwj" in domain for "Lim Wei Jie")
+  if (keywords.length >= 3) {
+    const initials = keywords.map(k => k[0]).join('');
+    // Try full initials first, then first 3 chars (for longer names)
+    if (initials.length >= 3 && domain.includes(initials)) return 2;
+    if (initials.length > 3 && domain.includes(initials.slice(0, 3))) return 2;
+  }
+
+  // Weak: any keyword or 2-word variant in domain
+  for (const v of variants) {
+    if (domain.includes(v)) return 1;
+  }
+  return 0;
+}
+
+// Backward-compat boolean wrapper used by older callsites
+function domainMatchesCompany(url, companyName) {
+  return domainMatchStrength(url, companyName) > 0;
 }
 
 // Extract phone numbers from text
@@ -215,12 +260,39 @@ exports.handler = async function(event) {
     };
   }
 
-  // ── Step 2: Find domain-matched results first ────────────────────────────
-  const matched   = candidates.filter(r => domainMatchesCompany(r.link, name));
-  const unmatched = candidates.filter(r => !domainMatchesCompany(r.link, name));
+  // ── Step 2: Score candidates by match strength + cross-result frequency ──
+  // Count how often each domain appears across all candidates — a domain that
+  // appears multiple times in the search results is more likely to be the
+  // company's real site, even if the name doesn't match.
+  const domainFreq = {};
+  for (const r of candidates) {
+    const d = getDomain(r.link);
+    if (d) domainFreq[d] = (domainFreq[d] || 0) + 1;
+  }
 
-  // Try matched first, then unmatched as fallback
-  const ordered = [...matched, ...unmatched].slice(0, 5); // max 5 attempts
+  const scored = candidates.map((r, i) => {
+    const d = getDomain(r.link);
+    const strength = domainMatchStrength(r.link, name);  // 0/1/2
+    const freq = domainFreq[d] || 1;
+    // Score: strength weighted heaviest, then frequency, then original SERP rank
+    const score = (strength * 100) + (freq >= 3 ? 50 : freq >= 2 ? 20 : 0) + (10 - i);
+    return { r, d, strength, freq, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const matched   = scored.filter(s => s.strength > 0).map(s => s.r);
+  const unmatched = scored.filter(s => s.strength === 0).map(s => s.r);
+  const ordered = scored.slice(0, 5).map(s => s.r);  // top 5 by score
+
+  // Top 3 candidates returned in every response — used as "candidate sites"
+  // fallback in the UI when no high-confidence match found
+  const topCandidates = scored.slice(0, 3).map(s => ({
+    url: s.r.link,
+    domain: s.d,
+    title: s.r.title || s.d,
+    snippet: (s.r.snippet || '').slice(0, 200),
+    strength: s.strength,
+    freq: s.freq
+  }));
 
   let fetchesAttempted = 0;
   let fetchesOk = 0;
@@ -247,6 +319,7 @@ exports.handler = async function(event) {
           email:   snippetEmail,
           source:  'snippet',
           reason:  'ok_snippet',
+          candidates: topCandidates,
           debug: {
             serp_count: results.length,
             after_blocklist: candidates.length,
@@ -284,6 +357,7 @@ exports.handler = async function(event) {
           email,
           source: 'page',
           reason: 'ok_page',
+          candidates: topCandidates,
           debug: {
             serp_count: results.length,
             after_blocklist: candidates.length,
@@ -310,6 +384,7 @@ exports.handler = async function(event) {
           email:   null,
           source:  'page',
           reason:  'ok_no_contact',
+          candidates: topCandidates,
           debug: {
             serp_count: results.length,
             after_blocklist: candidates.length,
@@ -332,12 +407,18 @@ exports.handler = async function(event) {
   else if (fetchesOk === 0) reason = 'all_fetches_failed';
   else if (matched.length === 0) reason = 'no_domain_matched_company_name';
 
+  // If we have candidates but couldn't verify any of them, surface as UNVERIFIED
+  // (with candidates for manual pick) instead of NO WEB — distinguishes "tried
+  // and failed" from "couldn't try at all"
+  const finalBadge = topCandidates.length > 0 ? 'UNVERIFIED' : 'NO WEB';
+
   return {
     statusCode: 200,
     headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      badge: 'NO WEB', website: null, phone: null, email: null,
+      badge: finalBadge, website: null, phone: null, email: null,
       reason,
+      candidates: topCandidates,
       debug: {
         serp_count: results.length,
         after_blocklist: candidates.length,

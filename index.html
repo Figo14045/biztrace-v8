@@ -1858,6 +1858,124 @@ async function fetchPage(page) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// CONTACT CELL RENDERING (with reason tooltip + candidates popover)
+// ══════════════════════════════════════════════════════════════
+
+// Friendly explanation per `reason` code (Fix A)
+const REASON_TEXT = {
+  'ok_snippet':         'Verified via search snippet on a matching domain.',
+  'ok_page':            'Contact info extracted from the company page.',
+  'ok_no_contact':      'Company website found but no contact info on the page.',
+  'serp_empty':         'Google returned no results for this company.',
+  'all_blocked':        'All search results were directory/social sites (LinkedIn, ZoomInfo, etc.) — no real website found.',
+  'snippet_only_no_match': 'Search results found but no domain matches the company name.',
+  'all_fetches_failed': 'Candidate websites could not be loaded (timeout or blocked by site).',
+  'no_domain_matched_company_name': 'No website domain matches the company name — check the candidates below.',
+  'no_match':           'Could not verify any candidate site as the company\'s own website.',
+};
+
+function renderContactCell(uen, enr) {
+  if (!enr || !enr.badge || enr.badge === 'ERROR') return '—';
+  const reasonText = REASON_TEXT[enr.reason] || '';
+  const tip = reasonText ? ` title="${esc(reasonText)}"` : '';
+  const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${enr.badge}</span>`;
+  const phoneHtml = enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : '';
+  const emailHtml = enr.email ? ` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>` : '';
+  // Show "View candidates" link when verification is shaky and we have candidates
+  const showCandidates = enr.candidates && enr.candidates.length > 0 &&
+    ['UNVERIFIED', 'LIKELY', 'NO WEB'].includes(enr.badge);
+  const candLink = showCandidates
+    ? ` <a href="#" onclick="event.stopPropagation();showCandidates('${uen}');return false" style="color:var(--accent2);font-size:10px;text-decoration:underline;margin-left:4px">view ${enr.candidates.length} candidate${enr.candidates.length>1?'s':''}</a>`
+    : '';
+  return badgeHtml + phoneHtml + emailHtml + candLink;
+}
+
+// Show a popover with the top candidate sites (Fix C)
+function showCandidates(uen) {
+  const enr = enrichData[uen];
+  if (!enr || !enr.candidates || !enr.candidates.length) return;
+
+  // Remove any existing popover
+  document.getElementById('cand-popover')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cand-popover';
+  overlay.style.cssText = `
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:5000;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  `;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const card = document.createElement('div');
+  card.style.cssText = `
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 8px; max-width: 560px; width: 100%; max-height: 80vh;
+    overflow-y: auto; padding: 20px; font-family: var(--mono); color: var(--text);
+  `;
+
+  const reasonText = REASON_TEXT[enr.reason] || '';
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div>
+        <div style="font-size:14px;font-weight:600">Candidate websites</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">UEN ${uen} · ${esc(reasonText)}</div>
+      </div>
+      <button onclick="document.getElementById('cand-popover').remove()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+      We couldn't confidently verify any of these as the company's own website. Pick the one that looks right:
+    </div>
+  `;
+
+  enr.candidates.forEach((c, i) => {
+    const strengthLabel = c.strength === 2 ? '<span style="color:var(--green);font-size:9px">STRONG MATCH</span>'
+                       : c.strength === 1 ? '<span style="color:var(--amber);font-size:9px">WEAK MATCH</span>'
+                       : '<span style="color:var(--text3);font-size:9px">NO NAME MATCH</span>';
+    const freqLabel = c.freq >= 2 ? ` · <span style="color:var(--accent2);font-size:9px">${c.freq}× in results</span>` : '';
+    html += `
+      <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <a href="${esc(c.url)}" target="_blank" style="color:var(--accent2);text-decoration:none;font-size:12px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title || c.domain)}</a>
+            <div style="font-size:10px;color:var(--text3);margin-top:2px">${esc(c.domain)}</div>
+            ${c.snippet ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;line-height:1.4">${esc(c.snippet)}</div>` : ''}
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            ${strengthLabel}${freqLabel}
+          </div>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:6px">
+          <a href="${esc(c.url)}" target="_blank" style="background:var(--accent);color:white;padding:4px 10px;border-radius:4px;font-size:10px;text-decoration:none;letter-spacing:0.05em">Open ↗</a>
+          <button onclick="acceptCandidate('${uen}', ${i})" style="background:var(--border2);color:var(--text);border:none;padding:4px 10px;border-radius:4px;font-size:10px;cursor:pointer;letter-spacing:0.05em">Use as website</button>
+        </div>
+      </div>
+    `;
+  });
+
+  card.innerHTML = html;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}
+
+// User picked a candidate — overwrite the stored enrichment with it
+function acceptCandidate(uen, idx) {
+  const enr = enrichData[uen];
+  if (!enr) return;
+  const c = enr.candidates[idx];
+  enrichData[uen] = {
+    ...enr,
+    website: c.url,
+    badge: 'LIKELY',
+    badgeClass: 'likely',
+    reason: 'manually_picked',
+  };
+  REASON_TEXT['manually_picked'] = 'Manually picked from candidate list.';
+  document.getElementById('cand-popover')?.remove();
+  renderTable();
+  showToast('Website updated');
+}
+
+// ══════════════════════════════════════════════════════════════
 // RENDER TABLE
 // ══════════════════════════════════════════════════════════════
 function renderTable() {
@@ -1920,7 +2038,7 @@ function renderTable() {
       <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
       <td>${voCell}</td>
       <td>${enr.website ? `<a href="${enr.website}" target="_blank" style="color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px" title="${enr.website}">${enr.website.replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0]}</a>` : '—'}</td>
-      <td>${enr.badge && enr.badge !== 'ERROR' ? `<span class="badge badge-${enr.badgeClass}">${enr.badge}</span>${enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : ''}${enr.email ? ` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>` : ''}` : '—'}</td>
+      <td>${renderContactCell(row.uen, enr)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -2191,6 +2309,8 @@ async function startEnrich() {
         phone:   contactData.phone   || null,
         badge,
         badgeClass,
+        reason:     contactData.reason || '',
+        candidates: contactData.candidates || [],
       };
 
       // Update panel row live
