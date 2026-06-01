@@ -233,6 +233,46 @@ function reshapeRows(result) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Density query (Chunk 3): server-side GROUP BY for Virtual Office detection.
+// Returns only (postal_code, level_no, unit_no, count) tuples with count >= 5.
+// This avoids streaming 2M rows over the wire just to compute densities.
+// ──────────────────────────────────────────────────────────────────────────
+async function runDensity(req) {
+  const minCount = Math.max(parseInt(req.min_count) || 5, 1);
+
+  const sql = `
+    SELECT postal_code, level_no, unit_no, COUNT(*) AS company_count
+    FROM companies
+    WHERE postal_code IS NOT NULL AND postal_code != '' AND postal_code != 'na'
+      AND entity_status_description IN ('Live', 'Live Company', 'Live (Receiver or Receiver and Manager appointed)')
+    GROUP BY postal_code, level_no, unit_no
+    HAVING COUNT(*) >= ?
+    ORDER BY company_count DESC
+  `;
+
+  const results = await executePipeline([{ sql, args: [minCount] }]);
+  const rows = reshapeRows(results[0]);
+  return { rows };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Distinct values (Chunk 3): one column at a time.
+// Returns distinct non-null values of one column. Used for filter dropdowns.
+// ──────────────────────────────────────────────────────────────────────────
+async function runDistinct(req) {
+  const field = req.field;
+  if (!field || !ALLOWED_COLUMNS.has(field)) {
+    throw new Error(`Unknown distinct column: ${field}`);
+  }
+  const limit = Math.min(Math.max(parseInt(req.limit) || 500, 1), 2000);
+  const col = quoteCol(field);
+  const sql = `SELECT DISTINCT ${col} AS value FROM companies WHERE ${col} IS NOT NULL AND ${col} != '' AND ${col} != 'na' ORDER BY ${col} LIMIT ${limit}`;
+  const results = await executePipeline([{ sql, args: [] }]);
+  const rows = reshapeRows(results[0]);
+  return { values: rows.map(r => r.value) };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Main query builder
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -326,6 +366,24 @@ exports.handler = async function(event) {
     }
 
     try {
+      // Mode dispatch: density / distinct / standard query
+      if (req.mode === 'density') {
+        const result = await runDensity(req);
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({
+          ok: true,
+          rows: result.rows,
+          count: result.rows.length
+        })};
+      }
+      if (req.mode === 'distinct') {
+        const result = await runDistinct(req);
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({
+          ok: true,
+          values: result.values,
+          count: result.values.length
+        })};
+      }
+
       const result = await runQuery(req);
       return { statusCode: 200, headers: CORS, body: JSON.stringify({
         ok: true,

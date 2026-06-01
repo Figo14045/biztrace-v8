@@ -1074,6 +1074,159 @@ body.show-advanced .advanced-only { display: block; }
 // ══════════════════════════════════════════════════════════════
 const SUPABASE_URL = 'https://ifyoyxoreswsaebebcdx.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmeW95eG9yZXN3c2FlYmViY2R4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MDc4NzQsImV4cCI6MjA5NDA4Mzg3NH0.mNb3NuhB4FvK_dFWJ0HH9jQq0HRVPzEn20U7waMLF-s';
+
+// ══════════════════════════════════════════════════════════════
+// V8 — TURSO BACKEND ADAPTER
+// ══════════════════════════════════════════════════════════════
+// Flip USE_TURSO to true to route all DB calls through the Netlify proxy
+// (which talks to Turso). When false, BizTrace uses the legacy Supabase
+// connection above. Both code paths exist side-by-side during the migration.
+const USE_TURSO = true;
+const PROXY_URL = '/.netlify/functions/query';
+
+// Default field list pulled by the table view. Includes derived columns
+// (has_auditor, full_address) which the proxy computes on the fly.
+const DEFAULT_FIELDS = [
+  'uen','entity_name','entity_type_description','entity_status_description',
+  'company_type_description','primary_ssic_code','primary_ssic_description',
+  'postal_code','block','street_name','level_no','unit_no','building_name',
+  'no_of_officers','annual_return_date','registration_incorporation_date',
+  'account_due_date','uen_of_audit_firm1','name_of_audit_firm1','has_auditor'
+];
+
+// Convert a PostgREST-style params object (used everywhere in BizTrace today)
+// into a Turso-friendly { filters, sort } structure.
+// We accept the SAME params the existing sbQuery() builds, so callers don't
+// have to change.
+function pgrestParamsToTurso(p) {
+  const out = { filters: [], sort: [], limit: 100, offset: 0 };
+
+  // Pagination — PostgREST uses Range header in sbQuery; for Turso we use
+  // explicit limit/offset that get passed in separately. The conversion
+  // happens in tbQuery() below.
+
+  // Sort — PostgREST: order=col.dir.nullslast
+  if (p.order) {
+    const parts = String(p.order).split(',');
+    for (const part of parts) {
+      const [field, dir] = part.split('.');
+      if (field) out.sort.push({ field, dir: (dir === 'desc' ? 'desc' : 'asc') });
+    }
+  }
+
+  // Filters — every other param is treated as a column filter
+  // PostgREST filter values look like:
+  //   ilike.*dental*    → ilike search for "dental"
+  //   eq.307644         → equals
+  //   in.("Live","Live Company")  → IN list
+  //   gte.2025-01-01    → >=
+  //   lte.2025-12-31    → <=
+  //   not.is.null       → IS NOT NULL
+  for (const [k, v] of Object.entries(p)) {
+    if (['order','limit','offset','select'].includes(k)) continue;
+    if (typeof v !== 'string') continue;
+    const m = v.match(/^([a-z_]+)\.(.+)$/i);
+    if (!m) continue;
+    const op = m[1];
+    const arg = m[2];
+
+    if (op === 'ilike') {
+      // Strip surrounding * for our internal value form
+      const stripped = arg.replace(/^\*/, '').replace(/\*$/, '');
+      out.filters.push({ field: k, op: 'ilike', value: stripped });
+    } else if (op === 'eq') {
+      out.filters.push({ field: k, op: 'eq', value: arg });
+    } else if (op === 'neq') {
+      out.filters.push({ field: k, op: 'neq', value: arg });
+    } else if (op === 'gte') {
+      out.filters.push({ field: k, op: 'gte', value: arg });
+    } else if (op === 'lte') {
+      out.filters.push({ field: k, op: 'lte', value: arg });
+    } else if (op === 'gt') {
+      out.filters.push({ field: k, op: 'gt', value: arg });
+    } else if (op === 'lt') {
+      out.filters.push({ field: k, op: 'lt', value: arg });
+    } else if (op === 'in') {
+      // arg looks like ("Live","Live Company")  — strip parens, split on comma,
+      // strip surrounding quotes
+      const inner = arg.replace(/^\(/, '').replace(/\)$/, '');
+      const values = inner.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+      out.filters.push({ field: k, op: 'in', values });
+    } else if (op === 'not') {
+      // not.is.null  → is_not_null
+      if (arg === 'is.null') out.filters.push({ field: k, op: 'is_not_null' });
+    } else if (op === 'is') {
+      if (arg === 'null') out.filters.push({ field: k, op: 'is_null' });
+    } else if (op === 'or') {
+      // OR clauses are used for SSIC search "(primary_ssic_code.ilike.X*,primary_ssic_description.ilike.*X*)"
+      // For now, fall back to searching only the description in Turso mode.
+      // TODO: add OR support in proxy
+      console.warn('OR filter not yet supported in Turso mode, skipping:', k, v);
+    }
+  }
+
+  return out;
+}
+
+// Call the Turso proxy with a structured query
+async function tbQuery(params, select, page = 1) {
+  const PAGE = 100;
+  const turso = pgrestParamsToTurso(params);
+  turso.limit = PAGE;
+  turso.offset = (page - 1) * PAGE;
+  turso.include_count = true;
+  turso.fields = DEFAULT_FIELDS;
+
+  const r = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(turso)
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`Proxy ${r.status}: ${txt.slice(0,300)}`);
+  }
+  const json = await r.json();
+  if (!json.ok) throw new Error(`Proxy error: ${json.error || 'unknown'}`);
+  return { data: json.rows || [], count: json.total || 0 };
+}
+
+// Distinct values via proxy
+async function tbDistinct(col) {
+  const r = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'distinct', field: col, limit: 500 })
+  });
+  if (!r.ok) return [];
+  const json = await r.json();
+  return (json.ok && json.values) ? json.values : [];
+}
+
+// Total count of companies
+async function tbCount() {
+  const r = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters: [], limit: 1, include_count: true, fields: ['uen'] })
+  });
+  if (!r.ok) return 0;
+  const json = await r.json();
+  return json.total || 0;
+}
+
+// Density via proxy (server-side GROUP BY)
+async function tbDensity() {
+  const r = await fetch(PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'density', min_count: 5 })
+  });
+  if (!r.ok) return [];
+  const json = await r.json();
+  return (json.ok && json.rows) ? json.rows : [];
+}
+
 const PAGE_SIZE = 100;
 
 // ══════════════════════════════════════════════════════════════
@@ -1216,6 +1369,29 @@ function setupSmartAddress() {
 // IN ('Live','Live Company') GROUP BY 1,2,3) and query the view directly.
 async function loadAddressDensity() {
   try {
+    if (USE_TURSO) {
+      // Turso path: density pre-aggregated server-side. Distinct types and
+      // company types are fetched in parallel.
+      const [densityRows, typeVals, ctypeVals] = await Promise.all([
+        tbDensity(),
+        tbDistinct('entity_type_description'),
+        tbDistinct('company_type_description'),
+      ]);
+      const map = new Map();
+      for (const row of densityRows) {
+        const key = `${row.postal_code}|${row.level_no || ''}|${row.unit_no || ''}`;
+        map.set(key, row.company_count || 0);
+      }
+      addressDensity = map;
+      filterOptions['entity_type_description']  = typeVals;
+      filterOptions['company_type_description'] = ctypeVals;
+      buildMultiSelect('ms-type',  typeVals);
+      buildMultiSelect('ms-ctype', ctypeVals);
+      console.log(`Turso density: ${map.size} unit summaries, ${typeVals.length} entity types, ${ctypeVals.length} company types`);
+      if (allResults && allResults.length) renderTable();
+      return;
+    }
+
     const PAGE = 1000;
     let page = 0;
     let total = 0;
@@ -1299,6 +1475,11 @@ function postalsMatchingTiers(tiers) {
 }
 
 async function loadDbCount() {
+  if (USE_TURSO) {
+    const total = await tbCount();
+    if (total) document.getElementById('db-count').textContent = total.toLocaleString();
+    return;
+  }
   const r = await sbHead('companies', {});
   if (r.count !== null) {
     document.getElementById('db-count').textContent = r.count.toLocaleString();
@@ -1353,6 +1534,8 @@ const SB_HEADERS = {
 };
 
 async function sbQuery(params, select, page = 1) {
+  if (USE_TURSO) return tbQuery(params, select, page);
+
   // Build URL manually to avoid URL encoding issues with PostgREST operators
   const from = (page - 1) * PAGE_SIZE;
   const to   = from + PAGE_SIZE - 1;
@@ -1408,6 +1591,8 @@ async function sbHead(table, params) {
 // PostgREST has no SELECT DISTINCT and a simple ?limit=500 sample misses values
 // that only appear later in the dataset.
 async function sbDistinct(col) {
+  if (USE_TURSO) return tbDistinct(col);
+
   const PAGE = 1000;
   const seen = new Set();
   let offset = 0;
@@ -2151,28 +2336,52 @@ function sortBy(col) {
 async function exportCSV() {
   showToast('Fetching all matching rows for export…');
   const params = buildParams();
-  const { order, ...filterParams } = params;
 
-  const parts = [`select=${encodeURIComponent(SELECT_COLS)}`];
-  for (const [k, val] of Object.entries(filterParams)) {
-    parts.push(`${k}=${val}`);
-  }
-  if (order) parts.push(`order=${order}`);
+  let allRows = [];
 
-  const baseUrl = `${SUPABASE_URL}/rest/v1/companies?${parts.join('&')}`;
+  if (USE_TURSO) {
+    // Turso path: paginate via the proxy
+    const turso = pgrestParamsToTurso(params);
+    turso.fields = DEFAULT_FIELDS;
+    turso.include_count = false;
+    const batchSize = 1000;
+    let offset = 0;
+    while (true) {
+      const r = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...turso, limit: batchSize, offset })
+      });
+      if (!r.ok) { console.error('CSV export proxy error', r.status); break; }
+      const json = await r.json();
+      if (!json.ok || !json.rows || json.rows.length === 0) break;
+      allRows.push(...json.rows);
+      offset += batchSize;
+      if (json.rows.length < batchSize) break;
+      if (offset > 200000) break;  // safety cap
+    }
+  } else {
+    const { order, ...filterParams } = params;
+    const parts = [`select=${encodeURIComponent(SELECT_COLS)}`];
+    for (const [k, val] of Object.entries(filterParams)) {
+      parts.push(`${k}=${val}`);
+    }
+    if (order) parts.push(`order=${order}`);
 
-  const allRows = [];
-  let offset = 0;
-  const batchSize = 1000;
-  while (true) {
-    const r = await fetch(baseUrl, {
-      headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${offset}-${offset+batchSize-1}` }
-    });
-    const batch = await r.json();
-    if (!batch.length) break;
-    allRows.push(...batch);
-    offset += batchSize;
-    if (batch.length < batchSize) break;
+    const baseUrl = `${SUPABASE_URL}/rest/v1/companies?${parts.join('&')}`;
+
+    let offset = 0;
+    const batchSize = 1000;
+    while (true) {
+      const r = await fetch(baseUrl, {
+        headers: { ...SB_HEADERS, 'Range-Unit': 'items', 'Range': `${offset}-${offset+batchSize-1}` }
+      });
+      const batch = await r.json();
+      if (!batch.length) break;
+      allRows.push(...batch);
+      offset += batchSize;
+      if (batch.length < batchSize) break;
+    }
   }
 
   const enrichedRows = allRows.map(r => ({
