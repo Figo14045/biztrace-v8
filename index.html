@@ -1257,26 +1257,14 @@ async function init() {
 // ══════════════════════════════════════════════════════════════
 // SMART ADDRESS PARSER
 // ══════════════════════════════════════════════════════════════
-// Accepts a free-text Singapore address and extracts postal/block/street/
-// building into the existing filter fields. Designed for common formats:
+// Accepts a free-text Singapore address and extracts postal/level/unit/
+// street/building into the existing filter fields. Designed for common
+// formats:
 //   "10 Anson Road #15-12 Singapore 079903"
-//   "Level 39, MBFC Tower 2, 10 Marina Boulevard, Singapore 018983"
 //   "Blk 123 Jurong East Street 13 #04-456 S(600123)"
+//   "1 Raffles Place Level 20 Singapore 048616"
 //   "409051"     → postal only
-//
-// Key heuristics:
-//   - Phrases containing Tower/Centre/Plaza/Mall/etc → building_name
-//   - "Blk N" or leading number → block field (not street)
-//   - Postal code is the strongest signal — when present, treat other
-//     fields as soft refinements, and DON'T fill level/unit (ACRA stores
-//     these inconsistently vs what users see)
-
-const BUILDING_KEYWORDS = /\b(tower|centre|center|plaza|mall|square|building|complex|hub|park|house|point|gate|view|gardens?|residence|residences|condo|condominium|apartment|apartments|suites?|courts?|heights|terrace|loft|lofts|lodge|villa|villas|mansion|mansions|gateway|junction|crescent|circle|landmark|capital|atrium|arcade|galleria|pavilion|wharf|exchange|mbfc|mbfcc|ocbc|uob|dbs)\b/i;
-
-function looksLikeBuilding(phrase) {
-  return BUILDING_KEYWORDS.test(phrase);
-}
-
+//   "#08-43"     → level/unit only
 function parseAddress(input) {
   if (!input || !input.trim()) return {};
   let s = ' ' + input.replace(/\s+/g, ' ').trim() + ' ';
@@ -1293,76 +1281,40 @@ function parseAddress(input) {
     if (m) { out.postal = m[1]; s = s.replace(m[0], ' '); }
   }
 
-  // 2) Combined unit pattern: #XX-YYY (only use if no postal — when postal is
-  // present, ACRA's stored level often differs from the displayed level so we
-  // leave level/unit empty for the user to set or skip)
-  if (!out.postal) {
-    m = s.match(/#(\d{1,3})[-\s]?(\d{1,4}[A-Z]?)/i);
-    if (m) {
-      out.level = m[1];
-      out.unit  = m[2];
-      s = s.replace(m[0], ' ');
-    } else {
-      const lm = s.match(/\b(?:Level|Lvl|L\.|Floor|Flr)\s*(\d{1,3})\b/i);
-      if (lm) { out.level = lm[1]; s = s.replace(lm[0], ' '); }
-      const um = s.match(/\bUnit\s*(\d{1,3}[-\s]?\d{0,4}[A-Z]?)\b/i);
-      if (um) {
-        const v = um[1].replace(/\s/g, '');
-        if (v.includes('-')) {
-          const [l, u] = v.split('-');
-          out.level = out.level || l;
-          out.unit = u;
-        } else {
-          out.unit = v;
-        }
-        s = s.replace(um[0], ' ');
-      }
-    }
+  // 2) Combined unit pattern: #XX-YYY
+  m = s.match(/#(\d{1,3})[-\s]?(\d{1,4}[A-Z]?)/i);
+  if (m) {
+    out.level = m[1];
+    out.unit  = m[2];
+    s = s.replace(m[0], ' ');
   } else {
-    // Strip level/unit tokens from the remaining string anyway so they don't
-    // pollute the street/building parsing
-    s = s.replace(/#\d{1,3}[-\s]?\d{1,4}[A-Z]?/gi, ' ');
-    s = s.replace(/\b(?:Level|Lvl|L\.|Floor|Flr)\s*\d{1,3}\b/gi, ' ');
-    s = s.replace(/\bUnit\s*\d{1,3}[-\s]?\d{0,4}[A-Z]?\b/gi, ' ');
-  }
-
-  // 3) Block pattern — "Blk 123" or "Block 123"
-  const blockM = s.match(/\b(?:Blk|Block)\s*(\d+[A-Z]?)\b/i);
-  if (blockM) {
-    out.block = blockM[1];
-    s = s.replace(blockM[0], ' ');
-  }
-
-  // 4) Split remaining into phrases by comma and classify each
-  s = s.replace(/\s+/g, ' ').replace(/^[\s,]+|[\s,]+$/g, '').trim();
-  if (s) {
-    const phrases = s.includes(',')
-      ? s.split(',').map(p => p.trim()).filter(Boolean)
-      : [s];
-
-    // Classify each phrase
-    const buildingPhrases = [];
-    const streetPhrases = [];
-    for (const phrase of phrases) {
-      if (looksLikeBuilding(phrase)) {
-        buildingPhrases.push(phrase);
+    // Separate Level / Floor patterns
+    const lm = s.match(/\b(?:Level|Lvl|L\.|Floor|Flr)\s*(\d{1,3})\b/i);
+    if (lm) { out.level = lm[1]; s = s.replace(lm[0], ' '); }
+    const um = s.match(/\bUnit\s*(\d{1,3}[-\s]?\d{0,4}[A-Z]?)\b/i);
+    if (um) {
+      const v = um[1].replace(/\s/g, '');
+      if (v.includes('-')) {
+        const [l, u] = v.split('-');
+        out.level = out.level || l;
+        out.unit = u;
       } else {
-        streetPhrases.push(phrase);
+        out.unit = v;
       }
+      s = s.replace(um[0], ' ');
     }
+  }
 
-    // If a street phrase starts with a number (e.g. "10 Marina Boulevard"),
-    // extract that number as block (only if no explicit block was already set)
-    if (!out.block && streetPhrases.length) {
-      const blockLeadM = streetPhrases[0].match(/^(\d+[A-Z]?)\s+(.+)$/);
-      if (blockLeadM) {
-        out.block = blockLeadM[1];
-        streetPhrases[0] = blockLeadM[2];
-      }
+  // 3) Whatever remains → building + street (split on comma if present)
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s) {
+    if (s.includes(',')) {
+      const parts = s.split(',').map(p => p.trim()).filter(Boolean);
+      out.street = parts[0];
+      if (parts.length >= 2) out.building = parts.slice(1).join(', ');
+    } else {
+      out.street = s;
     }
-
-    if (buildingPhrases.length) out.building = buildingPhrases.join(', ');
-    if (streetPhrases.length) out.street = streetPhrases.filter(Boolean).join(', ');
   }
   return out;
 }
@@ -1371,7 +1323,6 @@ function parseAddress(input) {
 function previewParsed(p) {
   const bits = [];
   if (p.postal)   bits.push(`Postal: ${p.postal}`);
-  if (p.block)    bits.push(`Blk: ${p.block}`);
   if (p.level)    bits.push(`Lvl: ${p.level}`);
   if (p.unit)     bits.push(`Unit: ${p.unit}`);
   if (p.street)   bits.push(`Street: ${truncate(p.street, 25)}`);
@@ -1389,9 +1340,8 @@ function setupSmartAddress() {
     clearTimeout(smartAddrTimer);
     smartAddrTimer = setTimeout(() => {
       const parsed = parseAddress(ta.value);
-      // Populate individual fields. NOTE: when postal is detected, we
-      // intentionally leave level/unit empty because ACRA's stored level
-      // often differs from the colloquial floor users see.
+      // Populate individual fields (only if user hasn't manually typed there)
+      // We always overwrite — manual edits below are still allowed before Apply
       document.getElementById('f-postal').value   = parsed.postal   || '';
       document.getElementById('f-level').value    = parsed.level    || '';
       document.getElementById('f-unit').value     = parsed.unit     || '';
@@ -1676,7 +1626,6 @@ function buildParams() {
   const postal   = v('f-postal').trim();
   const building = v('f-building').trim();
   const street   = v('f-street').trim();
-  const block    = v('f-block') ? v('f-block').trim() : '';
   const level    = v('f-level').trim();
   const unit     = v('f-unit').trim();
   const ssic     = v('f-ssic').trim();
@@ -1693,7 +1642,6 @@ function buildParams() {
   const auditor  = document.getElementById('f-auditor').checked;
 
   if (postal)   p['postal_code']    = `eq.${postal}`;
-  if (block)    p['block']           = `eq.${block}`;
   if (building) p['building_name']  = `ilike.*${building}*`;
   if (street)   p['street_name']    = `ilike.*${street}*`;
   if (level)    p['level_no']       = `eq.${level}`;
