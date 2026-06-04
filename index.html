@@ -1412,8 +1412,10 @@ function setupSmartAddress() {
     }, 200);
   });
 
-  // If user manually edits any address field, treat it as manual entry
-  ['f-postal', 'f-level', 'f-unit', 'f-street', 'f-building'].forEach(id => {
+  // If user manually edits postal/street/building, treat it as manual entry
+  // (they're contradicting the parser). But editing level/unit is a refinement
+  // within the parsed address, so we keep the cascade behavior.
+  ['f-postal', 'f-street', 'f-building'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', () => { smartParserUsed = false; });
   });
@@ -2080,6 +2082,19 @@ const SELECT_COLS = [
 // ══════════════════════════════════════════════════════════════
 // APPLY FILTERS
 // ══════════════════════════════════════════════════════════════
+// Tracks which address fallback tier matched on the last search. Null when
+// no fallback was used (manual filtering or exact-match). Used by exportCSV
+// to ensure the export sees the same rows the user is looking at.
+let lastFallbackTier = null;
+const FALLBACK_TIER_KEEP = {
+  'exact':              ['postal_code', 'block', 'street_name', 'building_name', 'level_no', 'unit_no'],
+  'postal+level+unit':  ['postal_code', 'level_no', 'unit_no'],
+  'postal+level':       ['postal_code', 'level_no'],
+  'postal':             ['postal_code'],
+  'block+street':       ['block', 'street_name'],
+  'street_or_building': ['street_name', 'building_name'],
+};
+
 async function applyFilters() {
   currentPage = 1;
   selected.clear();
@@ -2112,33 +2127,27 @@ async function fetchPage(page) {
     let data, count, tier = null;
 
     if (useFallback) {
-      const cascade = [
-        { name: 'exact', keep: ['postal_code', 'block', 'street_name', 'building_name', 'level_no', 'unit_no'] },
-        { name: 'postal+level+unit', keep: ['postal_code', 'level_no', 'unit_no'] },
-        { name: 'postal+level',      keep: ['postal_code', 'level_no'] },
-        { name: 'postal',            keep: ['postal_code'] },
-        { name: 'block+street',      keep: ['block', 'street_name'] },
-        { name: 'street_or_building', keep: ['street_name', 'building_name'] },
-      ];
+      const tierOrder = ['exact', 'postal+level+unit', 'postal+level', 'postal', 'block+street', 'street_or_building'];
 
-      for (const tierDef of cascade) {
-        const tierParams = stripAddressFields(params, tierDef.keep);
+      for (const tierName of tierOrder) {
+        const tierParams = stripAddressFields(params, FALLBACK_TIER_KEEP[tierName]);
         const result = await sbQuery(tierParams, SELECT_COLS, page);
         if (result.count > 0) {
           data = result.data;
           count = result.count;
-          tier = tierDef.name;
+          tier = tierName;
           break;
         }
       }
       // If all tiers returned 0, use the loosest result (empty)
-      if (!data) { data = []; count = 0; }
+      if (!data) { data = []; count = 0; tier = 'street_or_building'; }
     } else {
       const result = await sbQuery(params, SELECT_COLS, page);
       data = result.data;
       count = result.count;
     }
 
+    lastFallbackTier = tier;
     totalCount  = count;
     allResults  = data;
     currentPage = page;
@@ -2477,7 +2486,13 @@ function sortBy(col) {
 // ══════════════════════════════════════════════════════════════
 async function exportCSV() {
   showToast('Fetching all matching rows for export…');
-  const params = buildParams();
+  let params = buildParams();
+
+  // If the current view used an address fallback tier, apply the same tier
+  // to the export so we get the same rows the user is looking at.
+  if (lastFallbackTier && lastFallbackTier !== 'exact' && FALLBACK_TIER_KEEP[lastFallbackTier]) {
+    params = stripAddressFields(params, FALLBACK_TIER_KEEP[lastFallbackTier]);
+  }
 
   let allRows = [];
 
