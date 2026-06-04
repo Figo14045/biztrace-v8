@@ -2098,6 +2098,7 @@ const FALLBACK_TIER_KEEP = {
 async function applyFilters() {
   currentPage = 1;
   selected.clear();
+  lastFallbackTier = null;  // reset so cascade re-runs on this fresh search
   updateSelectedUI();
   await fetchPage(1);
 }
@@ -2117,16 +2118,21 @@ async function fetchPage(page) {
   showLoading();
   const params = buildParams();
 
-  // If the smart parser was used and we're on page 1 (a fresh search), run
-  // the fallback cascade: progressively loosen address fields until we find
-  // results. This handles cases where users type colloquial building names
-  // or floor numbers that don't exactly match ACRA's stored values.
-  const useFallback = smartParserUsed && page === 1;
-
   try {
-    let data, count, tier = null;
+    let data, count, tier = lastFallbackTier;
 
-    if (useFallback) {
+    // Case A: fresh search using the smart parser → run the cascade to find
+    //   the most precise tier that returns rows. Only on page 1.
+    // Case B: paginating an in-progress search where the cascade already
+    //   matched a tier → reuse that same tier's stripped params on every
+    //   subsequent page so Prev/Next show consistent data.
+    // Case C: manual filtering (smart parser not used, or cascade already
+    //   landed on 'exact') → just run the strict query.
+
+    const isFreshSearchWithSmart = smartParserUsed && page === 1 && lastFallbackTier === null;
+    const isPaginatingFallback   = page !== 1 && lastFallbackTier && lastFallbackTier !== 'exact';
+
+    if (isFreshSearchWithSmart) {
       const tierOrder = ['exact', 'postal+level+unit', 'postal+level', 'postal', 'block+street', 'street_or_building'];
 
       for (const tierName of tierOrder) {
@@ -2139,8 +2145,13 @@ async function fetchPage(page) {
           break;
         }
       }
-      // If all tiers returned 0, use the loosest result (empty)
       if (!data) { data = []; count = 0; tier = 'street_or_building'; }
+    } else if (isPaginatingFallback) {
+      const tierParams = stripAddressFields(params, FALLBACK_TIER_KEEP[lastFallbackTier]);
+      const result = await sbQuery(tierParams, SELECT_COLS, page);
+      data = result.data;
+      count = result.count;
+      tier = lastFallbackTier;  // keep showing the same banner
     } else {
       const result = await sbQuery(params, SELECT_COLS, page);
       data = result.data;
@@ -2158,7 +2169,6 @@ async function fetchPage(page) {
     document.getElementById('data-table').style.display = '';
     document.getElementById('pagination').style.display = '';
 
-    // Show fallback banner if a non-exact tier was used
     showAddressFallbackBanner(tier);
   } catch(e) {
     showError('Query failed: ' + e.message);
