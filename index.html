@@ -2121,16 +2121,16 @@ async function fetchPage(page) {
   try {
     let data, count, tier = lastFallbackTier;
 
-    // Case A: fresh search using the smart parser → run the cascade to find
-    //   the most precise tier that returns rows. Only on page 1.
-    // Case B: paginating an in-progress search where the cascade already
-    //   matched a tier → reuse that same tier's stripped params on every
-    //   subsequent page so Prev/Next show consistent data.
-    // Case C: manual filtering (smart parser not used, or cascade already
-    //   landed on 'exact') → just run the strict query.
+    // Three cases:
+    //  A. Fresh search with smart parser → run the cascade, find best tier.
+    //     Identified by: smart parser used AND no tier stored yet.
+    //  B. Paginating an in-progress fallback search → reuse the stored tier
+    //     so all pages show the same dataset (Prev/Next/page-number).
+    //     Identified by: stored tier exists and isn't 'exact'.
+    //  C. Manual filtering OR exact-tier search → just run the strict query.
 
-    const isFreshSearchWithSmart = smartParserUsed && page === 1 && lastFallbackTier === null;
-    const isPaginatingFallback   = page !== 1 && lastFallbackTier && lastFallbackTier !== 'exact';
+    const isFreshSearchWithSmart = smartParserUsed && lastFallbackTier === null;
+    const isPaginatingFallback   = lastFallbackTier && lastFallbackTier !== 'exact';
 
     if (isFreshSearchWithSmart) {
       const tierOrder = ['exact', 'postal+level+unit', 'postal+level', 'postal', 'block+street', 'street_or_building'];
@@ -2151,7 +2151,7 @@ async function fetchPage(page) {
       const result = await sbQuery(tierParams, SELECT_COLS, page);
       data = result.data;
       count = result.count;
-      tier = lastFallbackTier;  // keep showing the same banner
+      tier = lastFallbackTier;
     } else {
       const result = await sbQuery(params, SELECT_COLS, page);
       data = result.data;
