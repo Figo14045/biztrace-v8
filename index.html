@@ -1379,6 +1379,11 @@ function previewParsed(p) {
   return bits.length ? `Detected → ${bits.join(' · ')}` : '';
 }
 
+// Track whether the most recent address fields were populated from the smart
+// parser (vs typed manually). When true, applyFilters() will run the address
+// fallback cascade if the strictest query returns 0.
+let smartParserUsed = false;
+
 // Debounced live-parsing on input
 let smartAddrTimer = null;
 function setupSmartAddress() {
@@ -1397,6 +1402,7 @@ function setupSmartAddress() {
       document.getElementById('f-unit').value     = parsed.unit     || '';
       document.getElementById('f-street').value   = parsed.street   || '';
       document.getElementById('f-building').value = parsed.building || '';
+      smartParserUsed = Object.keys(parsed).length > 0;
       preview.textContent = previewParsed(parsed);
       preview.style.color = ta.value.trim() && !Object.keys(parsed).length
         ? 'var(--amber)' : 'var(--text3)';
@@ -1404,6 +1410,12 @@ function setupSmartAddress() {
         preview.textContent = '⚠ Could not parse — try filling fields manually below';
       }
     }, 200);
+  });
+
+  // If user manually edits any address field, treat it as manual entry
+  ['f-postal', 'f-level', 'f-unit', 'f-street', 'f-building'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => { smartParserUsed = false; });
   });
 }
 
@@ -2075,11 +2087,58 @@ async function applyFilters() {
   await fetchPage(1);
 }
 
+// Strip the address-related fields from a params object — used by the
+// fallback cascade to progressively loosen the address constraints.
+function stripAddressFields(params, keep) {
+  const ADDRESS_FIELDS = ['postal_code', 'block', 'street_name', 'building_name', 'level_no', 'unit_no'];
+  const out = { ...params };
+  for (const f of ADDRESS_FIELDS) {
+    if (!keep.includes(f)) delete out[f];
+  }
+  return out;
+}
+
 async function fetchPage(page) {
   showLoading();
   const params = buildParams();
+
+  // If the smart parser was used and we're on page 1 (a fresh search), run
+  // the fallback cascade: progressively loosen address fields until we find
+  // results. This handles cases where users type colloquial building names
+  // or floor numbers that don't exactly match ACRA's stored values.
+  const useFallback = smartParserUsed && page === 1;
+
   try {
-    const { data, count } = await sbQuery(params, SELECT_COLS, page);
+    let data, count, tier = null;
+
+    if (useFallback) {
+      const cascade = [
+        { name: 'exact', keep: ['postal_code', 'block', 'street_name', 'building_name', 'level_no', 'unit_no'] },
+        { name: 'postal+level+unit', keep: ['postal_code', 'level_no', 'unit_no'] },
+        { name: 'postal+level',      keep: ['postal_code', 'level_no'] },
+        { name: 'postal',            keep: ['postal_code'] },
+        { name: 'block+street',      keep: ['block', 'street_name'] },
+        { name: 'street_or_building', keep: ['street_name', 'building_name'] },
+      ];
+
+      for (const tierDef of cascade) {
+        const tierParams = stripAddressFields(params, tierDef.keep);
+        const result = await sbQuery(tierParams, SELECT_COLS, page);
+        if (result.count > 0) {
+          data = result.data;
+          count = result.count;
+          tier = tierDef.name;
+          break;
+        }
+      }
+      // If all tiers returned 0, use the loosest result (empty)
+      if (!data) { data = []; count = 0; }
+    } else {
+      const result = await sbQuery(params, SELECT_COLS, page);
+      data = result.data;
+      count = result.count;
+    }
+
     totalCount  = count;
     allResults  = data;
     currentPage = page;
@@ -2089,9 +2148,40 @@ async function fetchPage(page) {
     document.getElementById('state-overlay').style.display = 'none';
     document.getElementById('data-table').style.display = '';
     document.getElementById('pagination').style.display = '';
+
+    // Show fallback banner if a non-exact tier was used
+    showAddressFallbackBanner(tier);
   } catch(e) {
     showError('Query failed: ' + e.message);
   }
+}
+
+// Show a non-intrusive banner explaining which fallback tier matched.
+function showAddressFallbackBanner(tier) {
+  let banner = document.getElementById('address-fallback-banner');
+  if (!tier || tier === 'exact') {
+    if (banner) banner.style.display = 'none';
+    return;
+  }
+  const messages = {
+    'postal+level+unit':   '📍 No exact match — showing all companies at this postal/level/unit.',
+    'postal+level':        '📍 No match at the unit — showing all companies on this level.',
+    'postal':              '📍 No match at the level — showing all companies at this postal code (the building).',
+    'block+street':        '📍 No postal match — showing all companies at this block + street.',
+    'street_or_building':  '📍 Loose match — showing all companies on this street or in this building.',
+  };
+  const msg = messages[tier] || '';
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'address-fallback-banner';
+    banner.style.cssText = 'background:rgba(255,180,40,0.08);border:1px solid rgba(255,180,40,0.3);color:var(--amber);padding:6px 12px;margin:6px 0;border-radius:4px;font-size:12px;font-family:var(--mono)';
+    const matchCount = document.getElementById('match-count');
+    if (matchCount && matchCount.parentElement) {
+      matchCount.parentElement.parentElement.insertBefore(banner, matchCount.parentElement.nextSibling);
+    }
+  }
+  banner.textContent = msg;
+  banner.style.display = 'block';
 }
 
 // ══════════════════════════════════════════════════════════════
