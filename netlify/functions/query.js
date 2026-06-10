@@ -136,6 +136,28 @@ function buildWhere(filters) {
   return { sql: clauses.join(' AND '), args };
 }
 
+// Build a WHERE clause for a list of sub-filters joined by OR.
+// Used for things like SSIC search where we want
+// "(primary_ssic_code matches X) OR (primary_ssic_description matches X)".
+// Each sub-filter has the same structure as a regular filter.
+function buildOrGroup(subFilters) {
+  if (!subFilters || !subFilters.length) return { sql: '', args: [] };
+  const tmp = buildWhere(subFilters);
+  if (!tmp.sql) return { sql: '', args: [] };
+  // buildWhere joined them with AND; we need them joined with OR instead.
+  // We rebuild by running each one individually then re-joining.
+  const clauses = [];
+  const args = [];
+  for (const f of subFilters) {
+    const one = buildWhere([f]);
+    if (one.sql) {
+      clauses.push(`(${one.sql})`);
+      for (const a of one.args) args.push(a);
+    }
+  }
+  return { sql: clauses.length ? '(' + clauses.join(' OR ') + ')' : '', args };
+}
+
 // Build the ORDER BY clause.
 function buildOrderBy(sort) {
   if (!sort || !sort.length) return '';
@@ -279,6 +301,7 @@ async function runDistinct(req) {
 async function runQuery(req) {
   const fields = req.fields || null;     // array of column names, or null for *
   const filters = req.filters || [];
+  const orGroups = req.or_groups || [];  // each item is an array of sub-filters joined by OR
   const sort = req.sort || [];
   const limit = Math.min(Math.max(parseInt(req.limit) || 100, 1), 1000);
   const offset = Math.max(parseInt(req.offset) || 0, 0);
@@ -286,7 +309,23 @@ async function runQuery(req) {
   const table = 'companies';
 
   const selectClause = buildSelect(fields);
-  const { sql: whereSql, args: whereArgs } = buildWhere(filters);
+  const wherePieces = [];
+  const whereArgs = [];
+
+  const baseWhere = buildWhere(filters);
+  if (baseWhere.sql) {
+    wherePieces.push(baseWhere.sql);
+    for (const a of baseWhere.args) whereArgs.push(a);
+  }
+  for (const group of orGroups) {
+    const g = buildOrGroup(group);
+    if (g.sql) {
+      wherePieces.push(g.sql);
+      for (const a of g.args) whereArgs.push(a);
+    }
+  }
+  const whereSql = wherePieces.join(' AND ');
+
   const orderClause = buildOrderBy(sort);
 
   let dataSql = `SELECT ${selectClause} FROM ${table}`;

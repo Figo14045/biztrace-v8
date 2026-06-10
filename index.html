@@ -1158,10 +1158,34 @@ function pgrestParamsToTurso(p) {
     } else if (op === 'is') {
       if (arg === 'null') out.filters.push({ field: k, op: 'is_null' });
     } else if (op === 'or') {
-      // OR clauses are used for SSIC search "(primary_ssic_code.ilike.X*,primary_ssic_description.ilike.*X*)"
-      // For now, fall back to searching only the description in Turso mode.
-      // TODO: add OR support in proxy
-      console.warn('OR filter not yet supported in Turso mode, skipping:', k, v);
+      // OR clauses are used for SSIC search:
+      //   (primary_ssic_code.ilike.X*,primary_ssic_description.ilike.*X*)
+      // We parse the components into an or_groups entry on `out`.
+      const inner = arg.replace(/^\(/, '').replace(/\)$/, '');
+      const parts = inner.split(',').map(s => s.trim());
+      const subFilters = [];
+      for (const part of parts) {
+        const subM = part.match(/^([a-z_]+)\.([a-z_]+)\.(.+)$/i);
+        if (!subM) continue;
+        const subField = subM[1];
+        const subOp = subM[2];
+        const subArg = subM[3];
+        if (subOp === 'ilike') {
+          const stripped = subArg.replace(/^\*/, '').replace(/\*$/, '');
+          // Detect starts_with vs contains based on original wildcards
+          if (subArg.endsWith('*') && !subArg.startsWith('*')) {
+            subFilters.push({ field: subField, op: 'starts_with', value: stripped });
+          } else {
+            subFilters.push({ field: subField, op: 'ilike', value: stripped });
+          }
+        } else if (subOp === 'eq') {
+          subFilters.push({ field: subField, op: 'eq', value: subArg });
+        }
+      }
+      if (subFilters.length) {
+        if (!out.or_groups) out.or_groups = [];
+        out.or_groups.push(subFilters);
+      }
     }
   }
 
