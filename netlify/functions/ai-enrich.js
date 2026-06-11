@@ -77,7 +77,7 @@ OUTPUT FORMAT (exact JSON, no other text):
   "description": "1-2 sentence summary of what they do",
   "confidence": "HIGH",
   "verification_method": "uen_match",
-  "reasoning": "1-3 sentences explaining how you verified this is the right company and where you found the contact details. Mention the source URL where you found each piece of contact info."
+  "reasoning": "MAXIMUM 2 sentences explaining how you verified this is the right company. Be brief. Cite source URLs short — domain only."
 }
 
 For any field you cannot find, use null instead of a value.
@@ -88,15 +88,18 @@ IMPORTANT RULES:
 - NEVER invent contact info. If you cannot find an email, return null for email.
 - NEVER assume similarly-named companies are the same.
 - Prefer official sources (company website > government registry > social media > directories like Yellow Pages).
-- If the company is "Struck Off", "Cancelled", or "Dissolved", note this in reasoning and set confidence to LOW even if you find historical info.
+- If the company is "Struck Off", "Cancelled", or "Dissolved", note this briefly in reasoning and set confidence to LOW even if you find historical info.
 - Use Singapore phone format with +65 country code.
 - For email, return only a general inquiry email (info@, contact@, enquiries@, sales@) — not a person's personal email.
+- Keep description and reasoning SHORT. Total response must be under 800 characters.
 - Output ONLY the JSON object. No markdown code fences. No explanations outside the JSON.`;
 }
 
 // Attempt to extract a JSON object from arbitrary text output.
 // Gemini sometimes wraps JSON in ```json ... ``` fences despite instructions,
-// or prepends a "Here's the result:" line.
+// or prepends a "Here's the result:" line. It also sometimes gets truncated
+// when it hits the maxOutputTokens limit — we attempt simple repair in
+// that case.
 function extractJson(text) {
   if (!text) return null;
 
@@ -116,6 +119,39 @@ function extractJson(text) {
   if (start !== -1 && end !== -1 && end > start) {
     const candidate = text.slice(start, end + 1);
     try { return JSON.parse(candidate); } catch (e) {}
+  }
+
+  // Strategy 4: response was truncated mid-string (no closing } at all).
+  // Attempt naive repair: trim back to the last complete "key": value pair
+  // and append closing brace.
+  if (start !== -1) {
+    let body = text.slice(start);
+    // Walk back from end until we find a comma or closing brace at top level
+    // We try several repair points to find one that parses.
+    for (let cut = body.length; cut > 0; cut--) {
+      let snippet = body.slice(0, cut);
+      // Trim trailing whitespace/garbage
+      snippet = snippet.replace(/[\s,]+$/, '');
+      // Try closing any open quote, then close the object
+      // Count unescaped quotes — if odd, we're mid-string, close it.
+      const quoteMatches = snippet.match(/(?<!\\)"/g) || [];
+      let repaired = snippet;
+      if (quoteMatches.length % 2 === 1) repaired += '"';
+      repaired += '}';
+      try {
+        const parsed = JSON.parse(repaired);
+        if (parsed && typeof parsed === 'object') {
+          parsed._truncated = true;
+          return parsed;
+        }
+      } catch (e) {
+        // keep trying smaller cuts
+      }
+      // For efficiency, jump back to last comma/close-quote instead of -1 each time
+      const lastComma = snippet.lastIndexOf(',', cut - 1);
+      if (lastComma === -1) break;
+      cut = lastComma;
+    }
   }
 
   return null;
@@ -179,7 +215,7 @@ exports.handler = async function (event) {
     tools: [{ google_search: {} }],
     generationConfig: {
       temperature: 0.2,
-      maxOutputTokens: 1024
+      maxOutputTokens: 4096
     }
   };
 
