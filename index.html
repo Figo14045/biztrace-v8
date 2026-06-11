@@ -2802,7 +2802,7 @@ async function startEnrich() {
       console.warn('Enrich error for', row.uen, e.message);
     }
 
-    await sleep(mode === 'ai' ? 1200 : 800);
+    await sleep(mode === 'ai' ? 6500 : 800);
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
@@ -2814,7 +2814,11 @@ async function startEnrich() {
 // ── AI enrichment ─────────────────────────────────────────────
 // Maps Gemini confidence levels to BizTrace's existing badge system so the
 // table UI and tooltips work identically to the SerpAPI flow.
-async function enrichOneAI(row, apiKey) {
+//
+// Note on rate limiting: Gemini 2.5 Flash free tier allows ~10 requests per
+// minute. We pace AI calls at 6.5 seconds apart (see sleep() in startEnrich)
+// and additionally retry once on 429 with a short backoff.
+async function enrichOneAI(row, apiKey, retryCount = 0) {
   const r = await fetch('/.netlify/functions/ai-enrich', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2831,6 +2835,14 @@ async function enrichOneAI(row, apiKey) {
       }
     })
   });
+
+  // Retry once on 429 (rate limit) with a 10-second backoff
+  if (r.status === 429 && retryCount < 1) {
+    console.warn(`Rate limited on ${row.uen}, waiting 10s and retrying…`);
+    await sleep(10000);
+    return enrichOneAI(row, apiKey, retryCount + 1);
+  }
+
   if (!r.ok) throw new Error(`ai-enrich returned ${r.status}`);
   const json = await r.json();
   if (!json.ok) throw new Error(json.error || 'AI enrichment failed');
