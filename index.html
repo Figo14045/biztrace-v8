@@ -2767,11 +2767,18 @@ function closeEnrichPanel() {
 }
 
 async function startEnrich() {
-  const key = getSerpKey();
-  if (!key) { showToast('Enter your SerpAPI key first'); return; }
-
+  const mode = getEnrichMode();
   const selRows = allResults.filter(r => selected.has(r.uen));
   if (!selRows.length) { showToast('No rows selected'); return; }
+
+  let key;
+  if (mode === 'ai') {
+    key = getGeminiKey();
+    if (!key) { showToast('Enter your Gemini API key first'); return; }
+  } else {
+    key = getSerpKey();
+    if (!key) { showToast('Enter your SerpAPI key first'); return; }
+  }
 
   const btn = document.getElementById('start-enrich-btn');
   btn.disabled = true;
@@ -2783,52 +2790,10 @@ async function startEnrich() {
       `Processing ${i+1} / ${selRows.length}…`;
 
     try {
-      // Step 1: SerpAPI search via Netlify function
-      const serpRes = await fetch(`/.netlify/functions/serp?q=${encodeURIComponent('"' + row.entity_name + '" Singapore')}&api_key=${key}`);
-      if (!serpRes.ok) {
-        throw new Error(`serp function returned ${serpRes.status} — is it deployed?`);
-      }
-      const serpData = await serpRes.json();
-      const organicResults = serpData?.organic_results || [];
-
-      // Step 2: POST all results to fetch-contact for smart domain matching
-      let contactData = {};
-      try {
-        const contactRes = await fetch(`/.netlify/functions/fetch-contact`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            uen: row.uen,
-            name: row.entity_name,
-            results: organicResults
-          })
-        });
-        if (contactRes.ok) contactData = await contactRes.json();
-      } catch(e) { console.error("fetch-contact error:", e); }
-
-      const badge = contactData.badge || 'NO WEB';
-      const badgeClass = {
-        'VERIFIED': 'verify', 'NAME MATCH': 'verify', 'LIKELY': 'likely',
-        'UNVERIFIED': 'unver', 'WRONG SITE': 'wrong', 'NO WEB': 'unver'
-      }[badge] || 'unver';
-
-      enrichData[row.uen] = {
-        website: contactData.website || null,
-        email:   contactData.email   || null,
-        phone:   contactData.phone   || null,
-        badge,
-        badgeClass,
-        reason:     contactData.reason || '',
-        candidates: contactData.candidates || [],
-      };
-
-      // Update panel row live
-      const er = document.getElementById(`er-${row.uen}`);
-      if (er) {
-        er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${badgeClass}">${badge}</span>`;
-        const contact = contactData.email || contactData.phone || '';
-        const site = contactData.website ? `<a href="${contactData.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(contactData.website).hostname}</a>` : '';
-        er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + site || '—';
+      if (mode === 'ai') {
+        await enrichOneAI(row, key);
+      } else {
+        await enrichOneSerp(row, key);
       }
     } catch(e) {
       enrichData[row.uen] = { badge: 'ERROR', badgeClass: 'wrong', website: null, email: null, phone: null };
@@ -2837,13 +2802,135 @@ async function startEnrich() {
       console.warn('Enrich error for', row.uen, e.message);
     }
 
-    await sleep(800);
+    await sleep(mode === 'ai' ? 1200 : 800);
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
   btn.disabled = false;
   btn.textContent = '▶ Start';
   renderTable();
+}
+
+// ── AI enrichment ─────────────────────────────────────────────
+// Maps Gemini confidence levels to BizTrace's existing badge system so the
+// table UI and tooltips work identically to the SerpAPI flow.
+async function enrichOneAI(row, apiKey) {
+  const r = await fetch('/.netlify/functions/ai-enrich', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      company: {
+        entity_name: row.entity_name,
+        uen: row.uen,
+        entity_type_description: row.entity_type_description,
+        entity_status_description: row.entity_status_description,
+        full_address: row.full_address,
+        primary_ssic_code: row.primary_ssic_code,
+        primary_ssic_description: row.primary_ssic_description,
+      }
+    })
+  });
+  if (!r.ok) throw new Error(`ai-enrich returned ${r.status}`);
+  const json = await r.json();
+  if (!json.ok) throw new Error(json.error || 'AI enrichment failed');
+
+  const result = json.result || {};
+  // Map confidence → existing badge style
+  const confidenceMap = {
+    'HIGH':   { badge: 'VERIFIED',   badgeClass: 'verify' },
+    'MEDIUM': { badge: 'LIKELY',     badgeClass: 'likely' },
+    'LOW':    { badge: 'UNVERIFIED', badgeClass: 'unver'  },
+    'NONE':   { badge: 'NO MATCH',   badgeClass: 'wrong'  },
+  };
+  const m = confidenceMap[result.confidence] || confidenceMap['NONE'];
+
+  // Build a rich reason for the tooltip combining description + reasoning
+  const tipBits = [];
+  if (result.description) tipBits.push(result.description);
+  if (result.reasoning) tipBits.push(`How verified: ${result.reasoning}`);
+  if (result.linkedin) tipBits.push(`LinkedIn: ${result.linkedin}`);
+
+  enrichData[row.uen] = {
+    website: result.website || null,
+    email:   result.email   || null,
+    phone:   result.phone   || null,
+    badge: m.badge,
+    badgeClass: m.badgeClass,
+    reason: tipBits.join('\n\n'),
+    candidates: [],  // AI mode doesn't surface candidate list
+    linkedin: result.linkedin || null,
+    description: result.description || '',
+    source: 'ai',
+  };
+
+  // Live-update panel row
+  const er = document.getElementById(`er-${row.uen}`);
+  if (er) {
+    er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${m.badgeClass}">${m.badge}</span>`;
+    const contact = result.email || result.phone || '';
+    let siteHtml = '';
+    if (result.website) {
+      try {
+        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
+      } catch (e) {
+        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
+      }
+    }
+    er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
+  }
+}
+
+// ── SerpAPI enrichment (existing flow, extracted into a helper) ──
+async function enrichOneSerp(row, key) {
+  // Step 1: SerpAPI search via Netlify function
+  const serpRes = await fetch(`/.netlify/functions/serp?q=${encodeURIComponent('"' + row.entity_name + '" Singapore')}&api_key=${key}`);
+  if (!serpRes.ok) {
+    throw new Error(`serp function returned ${serpRes.status} — is it deployed?`);
+  }
+  const serpData = await serpRes.json();
+  const organicResults = serpData?.organic_results || [];
+
+  // Step 2: POST all results to fetch-contact for smart domain matching
+  let contactData = {};
+  try {
+    const contactRes = await fetch(`/.netlify/functions/fetch-contact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        uen: row.uen,
+        name: row.entity_name,
+        results: organicResults
+      })
+    });
+    if (contactRes.ok) contactData = await contactRes.json();
+  } catch(e) { console.error("fetch-contact error:", e); }
+
+  const badge = contactData.badge || 'NO WEB';
+  const badgeClass = {
+    'VERIFIED': 'verify', 'NAME MATCH': 'verify', 'LIKELY': 'likely',
+    'UNVERIFIED': 'unver', 'WRONG SITE': 'wrong', 'NO WEB': 'unver'
+  }[badge] || 'unver';
+
+  enrichData[row.uen] = {
+    website: contactData.website || null,
+    email:   contactData.email   || null,
+    phone:   contactData.phone   || null,
+    badge,
+    badgeClass,
+    reason:     contactData.reason || '',
+    candidates: contactData.candidates || [],
+    source: 'serp',
+  };
+
+  // Update panel row live
+  const er = document.getElementById(`er-${row.uen}`);
+  if (er) {
+    er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${badgeClass}">${badge}</span>`;
+    const contact = contactData.email || contactData.phone || '';
+    const site = contactData.website ? `<a href="${contactData.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(contactData.website).hostname}</a>` : '';
+    er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + site || '—';
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
