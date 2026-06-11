@@ -312,13 +312,54 @@ body {
 .apply-btn:hover { background: var(--accent2); }
 
 /* Serp key input */
-#serp-section {
+#enrichment-section {
   padding: 10px 12px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
 }
-#serp-section label {
+#enrichment-section > label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  display: block;
+  margin-bottom: 5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+#enrich-mode-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.mode-radio {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text2);
+  background: var(--bg);
+  transition: all 120ms;
+}
+.mode-radio:hover { border-color: var(--accent); color: var(--text); }
+.mode-radio input[type="radio"] { margin: 0; cursor: pointer; }
+.mode-radio:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(76,154,255,0.08);
+  color: var(--text);
+}
+#serp-section, #ai-section {
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+#serp-section label, #ai-section label {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--text3);
@@ -989,10 +1030,32 @@ body.show-advanced .advanced-only { display: block; }
 
     </div>
 
-    <!-- SerpAPI key -->
-    <div id="serp-section">
-      <label>SerpAPI Key</label>
-      <input class="filter-input" id="serp-key" type="password" placeholder="Paste your SerpAPI key">
+    <!-- Enrichment mode + API keys -->
+    <div id="enrichment-section">
+      <label>Enrichment Mode</label>
+      <div id="enrich-mode-toggle">
+        <label class="mode-radio">
+          <input type="radio" name="enrich-mode" value="serp" id="mode-serp" checked>
+          <span>SerpAPI</span>
+        </label>
+        <label class="mode-radio">
+          <input type="radio" name="enrich-mode" value="ai" id="mode-ai">
+          <span>AI (Gemini)</span>
+        </label>
+      </div>
+
+      <div id="serp-section">
+        <label>SerpAPI Key</label>
+        <input class="filter-input" id="serp-key" type="password" placeholder="Paste your SerpAPI key">
+      </div>
+
+      <div id="ai-section" style="display:none">
+        <label>Gemini API Key</label>
+        <input class="filter-input" id="gemini-key" type="password" placeholder="Paste your Gemini API key">
+        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4">
+          Get a free key at <span style="color:var(--accent)">aistudio.google.com/apikey</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1274,6 +1337,8 @@ let addressDensity = new Map();  // "postal|level|unit" → count of companies s
 // ══════════════════════════════════════════════════════════════
 async function init() {
   loadSerpKey();
+  loadGeminiKey();
+  setupEnrichMode();
   await loadFilterOptions();
   await loadDbCount();
   refreshSortIndicators();
@@ -2620,8 +2685,9 @@ function downloadCSV(rows, filename) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// SERP ENRICHMENT
+// ENRICHMENT MODE + KEYS
 // ══════════════════════════════════════════════════════════════
+
 function loadSerpKey() {
   const k = localStorage.getItem('serp_key');
   if (k) document.getElementById('serp-key').value = k;
@@ -2631,6 +2697,46 @@ function getSerpKey() {
   const k = document.getElementById('serp-key').value.trim();
   if (k) localStorage.setItem('serp_key', k);
   return k;
+}
+
+function loadGeminiKey() {
+  const k = localStorage.getItem('gemini_key');
+  if (k) document.getElementById('gemini-key').value = k;
+}
+
+function getGeminiKey() {
+  const k = document.getElementById('gemini-key').value.trim();
+  if (k) localStorage.setItem('gemini_key', k);
+  return k;
+}
+
+function getEnrichMode() {
+  // Returns 'ai' or 'serp'. Default 'serp' if nothing stored.
+  return localStorage.getItem('enrich_mode') || 'serp';
+}
+
+function setEnrichMode(mode) {
+  localStorage.setItem('enrich_mode', mode);
+  const serpSection = document.getElementById('serp-section');
+  const aiSection = document.getElementById('ai-section');
+  if (mode === 'ai') {
+    serpSection.style.display = 'none';
+    aiSection.style.display = '';
+  } else {
+    serpSection.style.display = '';
+    aiSection.style.display = 'none';
+  }
+}
+
+function setupEnrichMode() {
+  const saved = getEnrichMode();
+  const radio = document.querySelector(`input[name="enrich-mode"][value="${saved}"]`);
+  if (radio) radio.checked = true;
+  setEnrichMode(saved);
+
+  document.querySelectorAll('input[name="enrich-mode"]').forEach(r => {
+    r.addEventListener('change', () => setEnrichMode(r.value));
+  });
 }
 
 function openEnrichPanel() {
