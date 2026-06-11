@@ -1125,6 +1125,38 @@ function pgrestParamsToTurso(p) {
   for (const [k, v] of Object.entries(p)) {
     if (['order','limit','offset','select'].includes(k)) continue;
     if (typeof v !== 'string') continue;
+
+    // Special-case the PostgREST `or` filter. Its KEY is literally "or" and
+    // its VALUE is "(field.op.arg,field.op.arg,...)" — no leading "or." in
+    // the value, so the standard regex below doesn't match it.
+    if (k === 'or') {
+      const inner = v.replace(/^\(/, '').replace(/\)$/, '');
+      const parts = inner.split(',').map(s => s.trim());
+      const subFilters = [];
+      for (const part of parts) {
+        const subM = part.match(/^([a-z_]+)\.([a-z_]+)\.(.+)$/i);
+        if (!subM) continue;
+        const subField = subM[1];
+        const subOp = subM[2];
+        const subArg = subM[3];
+        if (subOp === 'ilike') {
+          const stripped = subArg.replace(/^\*/, '').replace(/\*$/, '');
+          if (subArg.endsWith('*') && !subArg.startsWith('*')) {
+            subFilters.push({ field: subField, op: 'starts_with', value: stripped });
+          } else {
+            subFilters.push({ field: subField, op: 'ilike', value: stripped });
+          }
+        } else if (subOp === 'eq') {
+          subFilters.push({ field: subField, op: 'eq', value: subArg });
+        }
+      }
+      if (subFilters.length) {
+        if (!out.or_groups) out.or_groups = [];
+        out.or_groups.push(subFilters);
+      }
+      continue;
+    }
+
     const m = v.match(/^([a-z_]+)\.(.+)$/i);
     if (!m) continue;
     const op = m[1];
@@ -1157,35 +1189,6 @@ function pgrestParamsToTurso(p) {
       if (arg === 'is.null') out.filters.push({ field: k, op: 'is_not_null' });
     } else if (op === 'is') {
       if (arg === 'null') out.filters.push({ field: k, op: 'is_null' });
-    } else if (op === 'or') {
-      // OR clauses are used for SSIC search:
-      //   (primary_ssic_code.ilike.X*,primary_ssic_description.ilike.*X*)
-      // We parse the components into an or_groups entry on `out`.
-      const inner = arg.replace(/^\(/, '').replace(/\)$/, '');
-      const parts = inner.split(',').map(s => s.trim());
-      const subFilters = [];
-      for (const part of parts) {
-        const subM = part.match(/^([a-z_]+)\.([a-z_]+)\.(.+)$/i);
-        if (!subM) continue;
-        const subField = subM[1];
-        const subOp = subM[2];
-        const subArg = subM[3];
-        if (subOp === 'ilike') {
-          const stripped = subArg.replace(/^\*/, '').replace(/\*$/, '');
-          // Detect starts_with vs contains based on original wildcards
-          if (subArg.endsWith('*') && !subArg.startsWith('*')) {
-            subFilters.push({ field: subField, op: 'starts_with', value: stripped });
-          } else {
-            subFilters.push({ field: subField, op: 'ilike', value: stripped });
-          }
-        } else if (subOp === 'eq') {
-          subFilters.push({ field: subField, op: 'eq', value: subArg });
-        }
-      }
-      if (subFilters.length) {
-        if (!out.or_groups) out.or_groups = [];
-        out.or_groups.push(subFilters);
-      }
     }
   }
 
