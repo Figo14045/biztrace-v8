@@ -1258,8 +1258,10 @@ function pgrestParamsToTurso(p) {
   return out;
 }
 
-// Call the Turso proxy with a structured query
-async function tbQuery(params, select, page = 1) {
+// Call the Turso proxy with a structured query. Auto-retries once on
+// 502/504 (Netlify cold-start timeout). The function warms up on first
+// call, so the retry usually succeeds within 1-2 seconds.
+async function tbQuery(params, select, page = 1, retryCount = 0) {
   const PAGE = 100;
   const turso = pgrestParamsToTurso(params);
   turso.limit = PAGE;
@@ -1272,6 +1274,16 @@ async function tbQuery(params, select, page = 1) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(turso)
   });
+
+  // Retry once on cold-start timeouts. Netlify's free tier sometimes
+  // takes >30s on the first invocation after idle, returning 502/504.
+  // The second attempt almost always succeeds since the function is warm.
+  if ((r.status === 502 || r.status === 504) && retryCount < 1) {
+    console.warn(`Proxy ${r.status} on page ${page}, retrying after 3s warm-up…`);
+    await new Promise(res => setTimeout(res, 3000));
+    return tbQuery(params, select, page, retryCount + 1);
+  }
+
   if (!r.ok) {
     const txt = await r.text();
     throw new Error(`Proxy ${r.status}: ${txt.slice(0,300)}`);
@@ -1282,36 +1294,48 @@ async function tbQuery(params, select, page = 1) {
 }
 
 // Distinct values via proxy
-async function tbDistinct(col) {
+async function tbDistinct(col, retryCount = 0) {
   const r = await fetch(PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode: 'distinct', field: col, limit: 500 })
   });
+  if ((r.status === 502 || r.status === 504) && retryCount < 1) {
+    await new Promise(res => setTimeout(res, 3000));
+    return tbDistinct(col, retryCount + 1);
+  }
   if (!r.ok) return [];
   const json = await r.json();
   return (json.ok && json.values) ? json.values : [];
 }
 
 // Total count of companies
-async function tbCount() {
+async function tbCount(retryCount = 0) {
   const r = await fetch(PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters: [], limit: 1, include_count: true, fields: ['uen'] })
   });
+  if ((r.status === 502 || r.status === 504) && retryCount < 1) {
+    await new Promise(res => setTimeout(res, 3000));
+    return tbCount(retryCount + 1);
+  }
   if (!r.ok) return 0;
   const json = await r.json();
   return json.total || 0;
 }
 
 // Density via proxy (server-side GROUP BY)
-async function tbDensity() {
+async function tbDensity(retryCount = 0) {
   const r = await fetch(PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mode: 'density', min_count: 5 })
   });
+  if ((r.status === 502 || r.status === 504) && retryCount < 1) {
+    await new Promise(res => setTimeout(res, 3000));
+    return tbDensity(retryCount + 1);
+  }
   if (!r.ok) return [];
   const json = await r.json();
   return (json.ok && json.rows) ? json.rows : [];
@@ -2206,6 +2230,41 @@ function stripAddressFields(params, keep) {
   return out;
 }
 
+// Decide which fallback tiers are worth trying based on which address
+// fields the parser actually populated. Skips tiers that would either
+// be redundant (require fields the user didn't provide) or that we know
+// will fail (e.g. "exact" tier when postal is present, because building
+// names rarely match ACRA's stored form).
+function planFallbackTiers(params) {
+  const has = {
+    postal:   !!params['postal_code'],
+    level:    !!params['level_no'],
+    unit:     !!params['unit_no'],
+    block:    !!params['block'],
+    street:   !!params['street_name'],
+    building: !!params['building_name'],
+  };
+
+  const tiers = [];
+
+  // When postal is present, this is the strongest signal. Building/street
+  // names from human input rarely match ACRA's storage format, so we skip
+  // "exact" and any tier that includes building.
+  if (has.postal) {
+    if (has.level && has.unit) tiers.push('postal+level+unit');
+    if (has.level)             tiers.push('postal+level');
+    tiers.push('postal');
+  } else if (has.block && has.street) {
+    tiers.push('block+street');
+    tiers.push('street_or_building');
+  } else if (has.street || has.building) {
+    tiers.push('street_or_building');
+  }
+
+  // De-duplicate while preserving order
+  return [...new Set(tiers)];
+}
+
 async function fetchPage(page) {
   showLoading();
   const params = buildParams();
@@ -2214,20 +2273,20 @@ async function fetchPage(page) {
     let data, count, tier = lastFallbackTier;
 
     // Three cases:
-    //  A. Fresh search with smart parser → run the cascade, find best tier.
-    //     Identified by: smart parser used AND no tier stored yet.
+    //  A. Fresh search with smart parser → pick the most likely tier given
+    //     which fields are populated. Skips tiers we know won't help.
     //  B. Paginating an in-progress fallback search → reuse the stored tier
     //     so all pages show the same dataset (Prev/Next/page-number).
-    //     Identified by: stored tier exists and isn't 'exact'.
     //  C. Manual filtering OR exact-tier search → just run the strict query.
 
     const isFreshSearchWithSmart = smartParserUsed && lastFallbackTier === null;
     const isPaginatingFallback   = lastFallbackTier && lastFallbackTier !== 'exact';
 
     if (isFreshSearchWithSmart) {
-      const tierOrder = ['exact', 'postal+level+unit', 'postal+level', 'postal', 'block+street', 'street_or_building'];
+      // Smart planning: only run the tiers that make sense for these fields
+      const plannedTiers = planFallbackTiers(params);
 
-      for (const tierName of tierOrder) {
+      for (const tierName of plannedTiers) {
         const tierParams = stripAddressFields(params, FALLBACK_TIER_KEEP[tierName]);
         const result = await sbQuery(tierParams, SELECT_COLS, page);
         if (result.count > 0) {
@@ -2237,7 +2296,14 @@ async function fetchPage(page) {
           break;
         }
       }
-      if (!data) { data = []; count = 0; tier = 'street_or_building'; }
+      // If all planned tiers returned 0 OR no tiers were planned, fall back to
+      // strict (and report it as the loosest tier so UI doesn't show banner)
+      if (!data) {
+        const result = await sbQuery(params, SELECT_COLS, page);
+        data = result.data;
+        count = result.count;
+        tier = plannedTiers.length ? plannedTiers[plannedTiers.length - 1] : null;
+      }
     } else if (isPaginatingFallback) {
       const tierParams = stripAddressFields(params, FALLBACK_TIER_KEEP[lastFallbackTier]);
       const result = await sbQuery(tierParams, SELECT_COLS, page);
