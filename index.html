@@ -1290,7 +1290,15 @@ async function tbQuery(params, select, page = 1, retryCount = 0) {
   }
   const json = await r.json();
   if (!json.ok) throw new Error(`Proxy error: ${json.error || 'unknown'}`);
-  return { data: json.rows || [], count: json.total || 0 };
+
+  // When the query had no filters, the proxy skips the expensive COUNT(*)
+  // and returns unfiltered_total:true. Use the known full-table total
+  // (captured at page load) instead of counting 2M rows every time.
+  let count = json.total;
+  if (json.unfiltered_total && DB_TOTAL_COUNT) {
+    count = DB_TOTAL_COUNT;
+  }
+  return { data: json.rows || [], count: count || 0 };
 }
 
 // Distinct values via proxy
@@ -1349,6 +1357,8 @@ const PAGE_SIZE = 100;
 let allResults   = [];   // current filtered full dataset (UENs + key fields)
 let currentPage  = 1;
 let totalCount   = 0;
+let DB_TOTAL_COUNT = 0;  // full-table row count, captured at page load; used as
+                         // the result count for unfiltered queries (avoids COUNT scan)
 let sortCol      = 'entity_name';
 let sortAsc      = true;
 let selected     = new Set();
@@ -1655,13 +1665,24 @@ function postalsMatchingTiers(tiers) {
 }
 
 async function loadDbCount() {
+  // Seed with the known table size immediately so the UI and the unfiltered
+  // count fallback work right away, without waiting on a slow COUNT scan.
+  DB_TOTAL_COUNT = 2080623;
+  document.getElementById('db-count').textContent = DB_TOTAL_COUNT.toLocaleString();
+
   if (USE_TURSO) {
-    const total = await tbCount();
-    if (total) document.getElementById('db-count').textContent = total.toLocaleString();
+    // Refresh the real count in the background — don't block page load on it.
+    tbCount().then(total => {
+      if (total) {
+        DB_TOTAL_COUNT = total;
+        document.getElementById('db-count').textContent = total.toLocaleString();
+      }
+    }).catch(() => { /* keep the seeded value */ });
     return;
   }
   const r = await sbHead('companies', {});
   if (r.count !== null) {
+    DB_TOTAL_COUNT = r.count;
     document.getElementById('db-count').textContent = r.count.toLocaleString();
   }
 }
@@ -1832,8 +1853,12 @@ function buildParams() {
   if (auditor)  p['has_auditor']    = `eq.true`;
 
   if (ssic) {
-    // SSIC: match code prefix OR description keyword
-    p['or'] = `(primary_ssic_code.ilike.${ssic}*,primary_ssic_description.ilike.*${ssic}*)`;
+    // SSIC: match code prefix only. We intentionally do NOT search
+    // primary_ssic_description because (a) all values in the dataset are the
+    // literal string "na" so it matches nothing useful, and (b) a
+    // LIKE '%x%' on description forces a full-table scan of 2M rows (~60s),
+    // which exceeds the Netlify function timeout. Code-prefix uses the index.
+    p['primary_ssic_code'] = `ilike.${ssic}*`;
   }
 
   if (ardFrom)  p['annual_return_date'] = `gte.${ardFrom}`;
@@ -1916,7 +1941,10 @@ function applyColumnFilters(p) {
       continue;
     }
     if (col === 'primary_ssic_description' && f.search) {
-      p['or'] = `(primary_ssic_code.ilike.${f.search}*,primary_ssic_description.ilike.*${f.search}*)`;
+      // Search the SSIC code (indexed) rather than the description column.
+      // The description is all "na" in the dataset and a substring scan on it
+      // times out. The Industry column header maps to a code-prefix search.
+      p['primary_ssic_code'] = `ilike.${f.search}*`;
       continue;
     }
     if (f.search) {

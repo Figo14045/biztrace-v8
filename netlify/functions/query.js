@@ -335,21 +335,33 @@ async function runQuery(req) {
 
   const statements = [{ sql: dataSql, args: whereArgs }];
 
-  if (includeCount) {
+  // COUNT(*) optimization: counting is the slowest part of a query. When
+  // there is NO filter at all, COUNT(*) would scan all ~2M rows and can blow
+  // past the Netlify function timeout. In that case we skip the count query
+  // entirely and signal the frontend to use the known table total instead.
+  const hasAnyFilter = !!whereSql;
+  const doCount = includeCount && hasAnyFilter;
+
+  if (doCount) {
     let countSql = `SELECT COUNT(*) AS total FROM ${table}`;
-    if (whereSql) countSql += ` WHERE ${whereSql}`;
+    countSql += ` WHERE ${whereSql}`;
     statements.push({ sql: countSql, args: whereArgs });
   }
 
   const results = await executePipeline(statements);
   const rows = reshapeRows(results[0]);
   let total = null;
-  if (includeCount && results[1]) {
+  if (doCount && results[1]) {
     const cntRows = reshapeRows(results[1]);
     total = cntRows[0]?.total ?? null;
+  } else if (includeCount && !hasAnyFilter) {
+    // No filter → tell the frontend to use the full-table total it already
+    // knows (avoids a multi-second COUNT scan of every row).
+    total = null;
+    var unfilteredTotal = true;
   }
 
-  return { rows, total, sql: dataSql };  // include sql for debugging during chunk 2
+  return { rows, total, unfiltered_total: (typeof unfilteredTotal !== 'undefined'), sql: dataSql };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
