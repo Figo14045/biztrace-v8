@@ -1018,10 +1018,10 @@ body.show-advanced .advanced-only { display: block; }
           </div>
           <select class="filter-input" id="f-vo" onchange="renderTable()">
             <option value="all">All companies</option>
-            <option value="exclude">Exclude virtual office (count ≥ 10)</option>
-            <option value="exclude-hubs">Exclude hubs only (count ≥ 30)</option>
+            <option value="exclude">Exclude shared addresses (count ≥ 10)</option>
+            <option value="exclude-hubs">Exclude hubs only (count ≥ 100)</option>
             <option value="only-shared">Only shared addresses (count ≥ 10)</option>
-            <option value="only-hubs">Only hubs (count ≥ 30)</option>
+            <option value="only-hubs">Only hubs (count ≥ 100)</option>
           </select>
         </div>
       </div>
@@ -2031,15 +2031,41 @@ function applyColumnFilters(p) {
   }
 }
 
-// Apply virtual-office filter client-side after rows loaded
+// Apply virtual-office filter client-side after rows loaded.
+// Two sources: the column-header dropdown (columnFilters['virtual_office'])
+// and the sidebar Virtual Office <select id="f-vo">. Both filter the rows
+// currently loaded for this page based on address density tiers.
 function applyClientColumnFilters(rows) {
+  let out = rows;
+
+  // 1) Column-header VO filter (tier checkboxes: HUB / LIKELY / SHARED / NONE)
   const voFilter = columnFilters['virtual_office'];
-  if (!voFilter || !voFilter.values || !voFilter.values.length) return rows;
-  return rows.filter(row => {
-    const { tier } = densityTier(row);
-    const t = tier || 'NONE';
-    return voFilter.values.includes(t);
-  });
+  if (voFilter && voFilter.values && voFilter.values.length) {
+    out = out.filter(row => {
+      const { tier } = densityTier(row);
+      const t = tier || 'NONE';
+      return voFilter.values.includes(t);
+    });
+  }
+
+  // 2) Sidebar VO select. Thresholds align with the badge tiers shown in the
+  //    table: SHARED 10–29, LIKELY 30–99, HUB ≥100.
+  const voSel = document.getElementById('f-vo');
+  const mode = voSel ? voSel.value : 'all';
+  if (mode && mode !== 'all') {
+    out = out.filter(row => {
+      const count = densityTier(row).count || 0;
+      switch (mode) {
+        case 'exclude':       return count < 10;    // drop shared / likely / hub
+        case 'exclude-hubs':  return count < 100;   // keep shared+likely, drop hubs
+        case 'only-shared':   return count >= 10;    // any shared signal and above
+        case 'only-hubs':     return count >= 100;   // hubs only (matches HUB badge)
+        default:              return true;
+      }
+    });
+  }
+
+  return out;
 }
 
 // Close any open dropdown
