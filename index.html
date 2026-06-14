@@ -2896,7 +2896,9 @@ async function startEnrich() {
       console.warn('Enrich error for', row.uen, e.message);
     }
 
-    await sleep(mode === 'ai' ? 6500 : 800);
+    // Flash-Lite free tier allows 15 RPM (one request every 4s). 4.5s keeps
+    // us safely under that. SerpAPI has no per-minute pressure so stays at 0.8s.
+    await sleep(mode === 'ai' ? 4500 : 800);
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;

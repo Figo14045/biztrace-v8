@@ -34,7 +34,12 @@
 //     raw_text: "..."  // included on parse failure for debugging
 //   }
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+// Gemini 2.5 Flash-Lite: free tier gives 15 RPM / 1,000 requests-per-day,
+// versus only ~20/day on standard Flash. Quality is slightly lower but more
+// than sufficient for company contact lookup, and it still supports Google
+// Search grounding. If a region lacks grounding on Flash-Lite, fall back to
+// 'gemini-2.5-flash' or 'gemini-3-flash'.
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const CORS = {
