@@ -246,6 +246,14 @@ body {
   transition: background 0.1s;
 }
 .multi-option:hover { background: rgba(59,130,246,0.1); }
+.multi-option-all {
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.multi-option-all label { color: var(--text); }
 .multi-option input[type=checkbox] { accent-color: var(--accent); width: 12px; height: 12px; }
 .multi-option label {
   font-family: var(--mono);
@@ -922,7 +930,10 @@ body.show-advanced .advanced-only { display: block; }
           <span class="filter-group-chevron">▾</span>
         </div>
         <div class="filter-group-body">
-          <input class="filter-input" id="f-ssic" placeholder="Search SSIC code or description">
+          <input class="filter-input" id="f-ssic" placeholder="SSIC code(s), e.g. 86201, 86203">
+          <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4">
+            Enter one or more codes separated by commas
+          </div>
         </div>
       </div>
 
@@ -1714,7 +1725,19 @@ async function loadFilterOptions() {
 function buildMultiSelect(elId, values) {
   const el = document.getElementById(elId);
   el.innerHTML = '';
-  values.filter(v => v).sort().forEach(v => {
+  const cleaned = values.filter(v => v).sort();
+
+  // "Select all / Clear all" toggle header — checked when all options are
+  // selected; clicking it toggles every option in this group at once.
+  const head = document.createElement('div');
+  head.className = 'multi-option multi-option-all';
+  const allId = `cb-${elId}-__all__`;
+  head.innerHTML = `
+    <input type="checkbox" id="${allId}" checked>
+    <label for="${allId}"><strong>Select all</strong></label>`;
+  el.appendChild(head);
+
+  cleaned.forEach(v => {
     const div = document.createElement('div');
     div.className = 'multi-option';
     const id = `cb-${elId}-${v.replace(/\W/g,'_')}`;
@@ -1722,6 +1745,26 @@ function buildMultiSelect(elId, values) {
       <input type="checkbox" id="${id}" value="${v}" checked>
       <label for="${id}" title="${v}">${v}</label>`;
     el.appendChild(div);
+  });
+
+  // Wire the "Select all" master checkbox
+  const master = document.getElementById(allId);
+  const optionBoxes = () => Array.from(el.querySelectorAll('input[type="checkbox"]'))
+    .filter(cb => cb.id !== allId);
+
+  master.addEventListener('change', () => {
+    optionBoxes().forEach(cb => { cb.checked = master.checked; });
+  });
+
+  // Keep the master checkbox in sync when individual options change:
+  // checked if all selected, unchecked if none, indeterminate if mixed.
+  optionBoxes().forEach(cb => {
+    cb.addEventListener('change', () => {
+      const boxes = optionBoxes();
+      const checkedCount = boxes.filter(b => b.checked).length;
+      master.checked = checkedCount === boxes.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+    });
   });
 }
 
@@ -1858,7 +1901,18 @@ function buildParams() {
     // literal string "na" so it matches nothing useful, and (b) a
     // LIKE '%x%' on description forces a full-table scan of 2M rows (~60s),
     // which exceeds the Netlify function timeout. Code-prefix uses the index.
-    p['primary_ssic_code'] = `ilike.${ssic}*`;
+    //
+    // Multiple codes may be entered comma-separated (e.g. "86201, 86203, 86204").
+    // Each becomes a prefix match, joined with OR.
+    const codes = ssic.split(',').map(s => s.trim()).filter(Boolean);
+    if (codes.length === 1) {
+      p['primary_ssic_code'] = `ilike.${codes[0]}*`;
+    } else if (codes.length > 1) {
+      // Build a PostgREST-style OR clause; the Turso adapter converts this
+      // into an or_groups entry. All branches are indexed prefix matches.
+      const branches = codes.map(c => `primary_ssic_code.ilike.${c}*`).join(',');
+      p['or'] = `(${branches})`;
+    }
   }
 
   if (ardFrom)  p['annual_return_date'] = `gte.${ardFrom}`;
@@ -3077,7 +3131,10 @@ function clearAllFilters() {
 }
 
 function getChecked(elId) {
-  return [...document.querySelectorAll(`#${elId} input[type=checkbox]:checked`)].map(cb => cb.value);
+  // Exclude the "Select all" master checkbox (id ends with __all__, no value)
+  return [...document.querySelectorAll(`#${elId} input[type=checkbox]:checked`)]
+    .filter(cb => !cb.id.endsWith('__all__') && cb.value)
+    .map(cb => cb.value);
 }
 
 // ══════════════════════════════════════════════════════════════
