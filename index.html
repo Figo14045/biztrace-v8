@@ -1053,6 +1053,10 @@ body.show-advanced .advanced-only { display: block; }
           <input type="radio" name="enrich-mode" value="ai" id="mode-ai">
           <span>AI (Gemini)</span>
         </label>
+        <label class="mode-radio">
+          <input type="radio" name="enrich-mode" value="claude" id="mode-claude">
+          <span>AI (Claude)</span>
+        </label>
       </div>
 
       <div id="serp-section">
@@ -1065,6 +1069,14 @@ body.show-advanced .advanced-only { display: block; }
         <input class="filter-input" id="gemini-key" type="password" placeholder="Paste your Gemini API key">
         <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4">
           Get a free key at <span style="color:var(--accent)">aistudio.google.com/apikey</span>
+        </div>
+      </div>
+
+      <div id="claude-section" style="display:none">
+        <label>Claude API Key</label>
+        <input class="filter-input" id="claude-key" type="password" placeholder="Paste your Anthropic API key (sk-ant-...)">
+        <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4">
+          Get a key at <span style="color:var(--accent)">console.anthropic.com</span> (paid, ~$0.01/company)
         </div>
       </div>
     </div>
@@ -1383,6 +1395,7 @@ let addressDensity = new Map();  // "postal|level|unit" → count of companies s
 async function init() {
   loadSerpKey();
   loadGeminiKey();
+  loadClaudeKey();
   setupEnrichMode();
   await loadFilterOptions();
   await loadDbCount();
@@ -2884,21 +2897,32 @@ function getGeminiKey() {
   return k;
 }
 
+function loadClaudeKey() {
+  const k = localStorage.getItem('claude_key');
+  if (k) document.getElementById('claude-key').value = k;
+}
+
+function getClaudeKey() {
+  const k = document.getElementById('claude-key').value.trim();
+  if (k) localStorage.setItem('claude_key', k);
+  return k;
+}
+
 function getEnrichMode() {
-  // Returns 'ai' or 'serp'. Default 'serp' if nothing stored.
+  // Returns 'serp', 'ai' (Gemini), or 'claude'. Default 'serp'.
   return localStorage.getItem('enrich_mode') || 'serp';
 }
 
 function setEnrichMode(mode) {
   localStorage.setItem('enrich_mode', mode);
-  const serpSection = document.getElementById('serp-section');
-  const aiSection = document.getElementById('ai-section');
-  if (mode === 'ai') {
-    serpSection.style.display = 'none';
-    aiSection.style.display = '';
-  } else {
-    serpSection.style.display = '';
-    aiSection.style.display = 'none';
+  const sections = {
+    serp:   document.getElementById('serp-section'),
+    ai:     document.getElementById('ai-section'),
+    claude: document.getElementById('claude-section'),
+  };
+  // Show only the section matching the selected mode
+  for (const [m, el] of Object.entries(sections)) {
+    if (el) el.style.display = (m === mode) ? '' : 'none';
   }
 }
 
@@ -2949,6 +2973,9 @@ async function startEnrich() {
   if (mode === 'ai') {
     key = getGeminiKey();
     if (!key) { showToast('Enter your Gemini API key first'); return; }
+  } else if (mode === 'claude') {
+    key = getClaudeKey();
+    if (!key) { showToast('Enter your Claude API key first'); return; }
   } else {
     key = getSerpKey();
     if (!key) { showToast('Enter your SerpAPI key first'); return; }
@@ -2966,10 +2993,23 @@ async function startEnrich() {
     try {
       if (mode === 'ai') {
         await enrichOneAI(row, key);
+      } else if (mode === 'claude') {
+        await enrichOneClaude(row, key);
       } else {
         await enrichOneSerp(row, key);
       }
     } catch(e) {
+      // Daily Gemini quota exhausted — stop the whole run rather than marking
+      // every remaining row as a failure. The rest would all fail identically.
+      if (e.dailyQuota) {
+        document.getElementById('enrich-progress').innerHTML =
+          `⚠ Daily Gemini quota reached (free tier). ${i} of ${selRows.length} enriched. ` +
+          `Resets at midnight Pacific time, or switch to SerpAPI / another Gemini key.`;
+        btn.disabled = false;
+        btn.textContent = '▶ Start';
+        renderTable();
+        return;
+      }
       enrichData[row.uen] = { badge: 'ERROR', badgeClass: 'wrong', website: null, email: null, phone: null };
       const er = document.getElementById(`er-${row.uen}`);
       if (er) er.querySelector('.enrich-status').textContent = 'error';
@@ -2977,8 +3017,9 @@ async function startEnrich() {
     }
 
     // Flash-Lite free tier allows 15 RPM (one request every 4s). 4.5s keeps
-    // us safely under that. SerpAPI has no per-minute pressure so stays at 0.8s.
-    await sleep(mode === 'ai' ? 4500 : 800);
+    // Gemini free tier is the tightest (4.5s). Claude paid tier has high
+    // limits so a light 1.2s pace is plenty. SerpAPI has no per-minute pressure.
+    await sleep(mode === 'ai' ? 4500 : (mode === 'claude' ? 1200 : 800));
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
@@ -3012,33 +3053,37 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
     })
   });
 
-  // Retry on transient failures. Two shapes to handle:
-  //  1. HTTP-level: the Netlify function itself returned 429/503
-  //  2. Body-level: the function returned 200 but wrapped a Gemini error like
-  //     "Gemini API 503" (model overloaded) or "Gemini API 429" (rate limit).
-  //     503 (UNAVAILABLE / high demand) is common on the free tier and is
-  //     almost always temporary — a short wait and retry usually succeeds.
+  // Classify the failure so we retry only when retrying can actually help.
+  //  - 503 (overloaded) or a per-minute rate limit → transient, retry.
+  //  - 429 with RESOURCE_EXHAUSTED / "free_tier" / daily quota → the daily
+  //    quota is used up; retrying today is pointless, so we stop the run and
+  //    surface a clear "quota reached" message instead of hammering the API.
   let json = null;
-  let transient = (r.status === 429 || r.status === 503);
-  if (!transient) {
-    try {
-      json = await r.json();
-      const errStr = (json && json.error) ? String(json.error) : '';
-      if (/\b(429|503)\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr)) {
-        transient = true;
-      }
-    } catch (e) { /* fall through to normal handling */ }
+  const errBody = await r.text();
+  try { json = JSON.parse(errBody); } catch (e) { json = null; }
+  const errStr = (json ? (String(json.error || '') + ' ' + String(json.detail || '')) : errBody);
+
+  const isDailyQuota = /RESOURCE_EXHAUSTED|free_tier|per day|generate_content_free_tier_requests/i.test(errStr);
+  const isTransient  = !isDailyQuota && (
+    r.status === 503 ||
+    /\b503\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr)
+  );
+
+  if (isDailyQuota) {
+    const e = new Error('DAILY_QUOTA');
+    e.dailyQuota = true;
+    throw e;
   }
 
-  if (transient && retryCount < 2) {
-    const waitMs = 4000 * (retryCount + 1);  // 4s, then 8s
+  if (isTransient && retryCount < 2) {
+    const waitMs = 5000 * (retryCount + 1);  // 5s, then 10s
     console.warn(`Transient Gemini error on ${row.uen} (attempt ${retryCount + 1}), waiting ${waitMs/1000}s and retrying…`);
     await sleep(waitMs);
     return enrichOneAI(row, apiKey, retryCount + 1);
   }
 
-  if (!r.ok) throw new Error(`ai-enrich returned ${r.status}`);
-  if (!json) json = await r.json();
+  if (!r.ok && !json) throw new Error(`ai-enrich returned ${r.status}`);
+  if (!json) throw new Error('Bad response from ai-enrich');
   if (!json.ok) throw new Error(json.error || 'AI enrichment failed');
 
   const result = json.result || {};
@@ -3071,6 +3116,85 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   };
 
   // Live-update panel row
+  const er = document.getElementById(`er-${row.uen}`);
+  if (er) {
+    er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${m.badgeClass}">${m.badge}</span>`;
+    const contact = result.email || result.phone || '';
+    let siteHtml = '';
+    if (result.website) {
+      try {
+        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
+      } catch (e) {
+        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
+      }
+    }
+    er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
+  }
+}
+
+// ── Claude enrichment ─────────────────────────────────────────
+// Same shape as enrichOneAI but calls the Claude proxy. Claude's paid tier
+// has high limits, so we retry only on genuine 5xx/overload, not quota.
+async function enrichOneClaude(row, apiKey, retryCount = 0) {
+  const r = await fetch('/.netlify/functions/claude-enrich', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      company: {
+        entity_name: row.entity_name,
+        uen: row.uen,
+        entity_type_description: row.entity_type_description,
+        entity_status_description: row.entity_status_description,
+        full_address: row.full_address,
+        primary_ssic_code: row.primary_ssic_code,
+        primary_ssic_description: row.primary_ssic_description,
+      }
+    })
+  });
+
+  const errBody = await r.text();
+  let json = null;
+  try { json = JSON.parse(errBody); } catch (e) {}
+  const errStr = json ? (String(json.error || '') + ' ' + String(json.detail || '')) : errBody;
+
+  // Retry once on transient overload (429/503/overloaded), short backoff.
+  if (retryCount < 1 && (/\b(429|503|overloaded)\b/i.test(errStr) || r.status === 429 || r.status === 503)) {
+    console.warn(`Transient Claude error on ${row.uen}, retrying in 5s…`);
+    await sleep(5000);
+    return enrichOneClaude(row, apiKey, retryCount + 1);
+  }
+
+  if (!json) throw new Error(`claude-enrich returned ${r.status}`);
+  if (!json.ok) throw new Error(json.error || 'Claude enrichment failed');
+
+  const result = json.result || {};
+  const confidenceMap = {
+    'HIGH':   { badge: 'VERIFIED',   badgeClass: 'verify' },
+    'MEDIUM': { badge: 'LIKELY',     badgeClass: 'likely' },
+    'LOW':    { badge: 'UNVERIFIED', badgeClass: 'unver'  },
+    'NONE':   { badge: 'NO MATCH',   badgeClass: 'wrong'  },
+  };
+  const m = confidenceMap[result.confidence] || confidenceMap['NONE'];
+
+  const tipBits = [];
+  if (result.description) tipBits.push(result.description);
+  if (result.reasoning) tipBits.push(`How verified: ${result.reasoning}`);
+  if (result.linkedin) tipBits.push(`LinkedIn: ${result.linkedin}`);
+
+  enrichData[row.uen] = {
+    website: result.website || null,
+    email:   result.email   || null,
+    phone:   result.phone   || null,
+    badge: m.badge,
+    badgeClass: m.badgeClass,
+    reason: tipBits.join('\n\n'),
+    candidates: [],
+    linkedin: result.linkedin || null,
+    description: result.description || '',
+    source: 'claude',
+  };
+
   const er = document.getElementById(`er-${row.uen}`);
   if (er) {
     er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${m.badgeClass}">${m.badge}</span>`;
