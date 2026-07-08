@@ -3012,15 +3012,33 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
     })
   });
 
-  // Retry once on 429 (rate limit) with a 10-second backoff
-  if (r.status === 429 && retryCount < 1) {
-    console.warn(`Rate limited on ${row.uen}, waiting 10s and retrying…`);
-    await sleep(10000);
+  // Retry on transient failures. Two shapes to handle:
+  //  1. HTTP-level: the Netlify function itself returned 429/503
+  //  2. Body-level: the function returned 200 but wrapped a Gemini error like
+  //     "Gemini API 503" (model overloaded) or "Gemini API 429" (rate limit).
+  //     503 (UNAVAILABLE / high demand) is common on the free tier and is
+  //     almost always temporary — a short wait and retry usually succeeds.
+  let json = null;
+  let transient = (r.status === 429 || r.status === 503);
+  if (!transient) {
+    try {
+      json = await r.json();
+      const errStr = (json && json.error) ? String(json.error) : '';
+      if (/\b(429|503)\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr)) {
+        transient = true;
+      }
+    } catch (e) { /* fall through to normal handling */ }
+  }
+
+  if (transient && retryCount < 2) {
+    const waitMs = 4000 * (retryCount + 1);  // 4s, then 8s
+    console.warn(`Transient Gemini error on ${row.uen} (attempt ${retryCount + 1}), waiting ${waitMs/1000}s and retrying…`);
+    await sleep(waitMs);
     return enrichOneAI(row, apiKey, retryCount + 1);
   }
 
   if (!r.ok) throw new Error(`ai-enrich returned ${r.status}`);
-  const json = await r.json();
+  if (!json) json = await r.json();
   if (!json.ok) throw new Error(json.error || 'AI enrichment failed');
 
   const result = json.result || {};
