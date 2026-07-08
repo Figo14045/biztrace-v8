@@ -62,11 +62,22 @@ verification_method must be one of: uen_match, address_match, name_only, unverif
 
 IMPORTANT RULES:
 - NEVER invent contact info. If you cannot find an email, return null for email.
-- NEVER assume similarly-named companies are the same.
-- Prefer official sources (company website > government registry > social media > directories).
-- If the company is "Struck Off", "Cancelled", or "Dissolved", note it briefly and set confidence to LOW even if you find historical info.
+- EMAIL HUNTING: look beyond the homepage. Check the company's "Contact" or
+  "About" page, business directories (e.g. Yellow Pages Singapore,
+  sgpbusiness), and LinkedIn. A general inbox email is valuable to the sales
+  team, so search thoroughly before returning null.
+- EMAIL HONESTY: only return an email you actually saw published on a real
+  page. NEVER guess or construct an email from the domain (do not invent
+  "info@<domain>" if you did not actually see it). A correct null is far more
+  useful than a fabricated address the team then has to clean up.
+- NEVER assume similarly-named companies are the same. "Axiom Stratix" is NOT
+  "Axiom Tech" — if the name doesn't match closely AND you can't confirm via
+  UEN or address, set confidence LOW or NONE and say so in reasoning.
+- Prefer official sources (company website > government registry > social
+  media > directories).
+- If the company is "Struck Off", "Cancelled", or "Dissolved", note it briefly
+  and set confidence to LOW even if you find historical info.
 - Use Singapore phone format with +65 country code.
-- For email, return only a general inquiry email (info@, contact@, enquiries@, sales@) — not a person's personal email.
 - Keep description and reasoning SHORT.
 - Output ONLY the JSON object.`;
 }
