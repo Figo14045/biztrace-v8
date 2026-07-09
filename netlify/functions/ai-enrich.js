@@ -39,7 +39,7 @@
 // than sufficient for company contact lookup, and it still supports Google
 // Search grounding. If a region lacks grounding on Flash-Lite, fall back to
 // 'gemini-2.5-flash' or 'gemini-3-flash'.
-const GEMINI_MODEL = 'gemini-3.1-flash-lite';
+const GEMINI_MODEL = 'Gemini 2.5 Flash Lite';
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const CORS = {
