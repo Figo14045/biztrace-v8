@@ -2501,7 +2501,9 @@ const REASON_TEXT = {
 
 function renderContactCell(uen, enr) {
   if (!enr || !enr.badge || enr.badge === 'ERROR') return '—';
-  const reasonText = REASON_TEXT[enr.reason] || '';
+  // SerpAPI supplies reason CODES (keys of REASON_TEXT); Gemini/Claude supply
+  // freeform prose. Fall through to the raw string so AI reasoning is visible.
+  const reasonText = REASON_TEXT[enr.reason] || enr.reason || '';
   const tip = reasonText ? ` title="${esc(reasonText)}"` : '';
   const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${enr.badge}</span>`;
   const phoneHtml = enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : '';
@@ -2558,7 +2560,7 @@ function showCandidates(uen) {
     overflow-y: auto; padding: 20px; font-family: var(--mono); color: var(--text);
   `;
 
-  const reasonText = REASON_TEXT[enr.reason] || '';
+  const reasonText = REASON_TEXT[enr.reason] || enr.reason || '';
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
@@ -2581,7 +2583,7 @@ function showCandidates(uen) {
       <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
         <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
           <div style="flex:1;min-width:0">
-            <a href="${esc(c.url)}" target="_blank" style="color:var(--accent2);text-decoration:none;font-size:12px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title || c.domain)}</a>
+            ${safeUrl(c.url) ? `<a href="${esc(safeUrl(c.url))}" target="_blank" rel="noopener noreferrer" style="color:var(--accent2);text-decoration:none;font-size:12px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title || c.domain)}</a>` : `<span style="font-size:12px;font-weight:600">${esc(c.title || c.domain)}</span>`}
             <div style="font-size:10px;color:var(--text3);margin-top:2px">${esc(c.domain)}</div>
             ${c.snippet ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;line-height:1.4">${esc(c.snippet)}</div>` : ''}
           </div>
@@ -2590,7 +2592,7 @@ function showCandidates(uen) {
           </div>
         </div>
         <div style="margin-top:8px;display:flex;gap:6px">
-          <a href="${esc(c.url)}" target="_blank" style="background:var(--accent);color:white;padding:4px 10px;border-radius:4px;font-size:10px;text-decoration:none;letter-spacing:0.05em">Open ↗</a>
+          ${safeUrl(c.url) ? `<a href="${esc(safeUrl(c.url))}" target="_blank" rel="noopener noreferrer" style="background:var(--accent);color:white;padding:4px 10px;border-radius:4px;font-size:10px;text-decoration:none;letter-spacing:0.05em">Open ↗</a>` : ''}
           <button onclick="acceptCandidate('${uen}', ${i})" style="background:var(--border2);color:var(--text);border:none;padding:4px 10px;border-radius:4px;font-size:10px;cursor:pointer;letter-spacing:0.05em">Use as website</button>
         </div>
       </div>
@@ -2682,7 +2684,7 @@ function renderTable() {
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
       <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
       <td>${voCell}</td>
-      <td>${enr.website ? `<a href="${enr.website}" target="_blank" style="color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px" title="${enr.website}">${enr.website.replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0]}</a>` : '—'}</td>
+      <td>${websiteLinkHtml(enr.website, 'color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px') || '—'}</td>
       <td>${renderContactCell(row.uen, enr)}</td>
     `;
     tbody.appendChild(tr);
@@ -3154,11 +3156,8 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
     const contact = result.email || result.phone || '';
     let siteHtml = '';
     if (result.website) {
-      try {
-        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
-      } catch (e) {
-        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
-      }
+      siteHtml = websiteLinkHtml(result.website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px')
+        || `<span style="color:var(--accent2);font-size:10px">${esc(result.website)}</span>`;
     }
     er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
   }
@@ -3235,11 +3234,8 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
     const contact = result.email || result.phone || '';
     let siteHtml = '';
     if (result.website) {
-      try {
-        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
-      } catch (e) {
-        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
-      }
+      siteHtml = websiteLinkHtml(result.website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px')
+        || `<span style="color:var(--accent2);font-size:10px">${esc(result.website)}</span>`;
     }
     er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
   }
@@ -3292,7 +3288,7 @@ async function enrichOneSerp(row, key) {
   if (er) {
     er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${badgeClass}">${badge}</span>`;
     const contact = contactData.email || contactData.phone || '';
-    const site = contactData.website ? `<a href="${contactData.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(contactData.website).hostname}</a>` : '';
+    const site = websiteLinkHtml(contactData.website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px');
     er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + site || '—';
   }
 }
@@ -3369,7 +3365,30 @@ function showToast(msg) {
 // UTILS
 // ══════════════════════════════════════════════════════════════
 function v(id) { return document.getElementById(id)?.value || ''; }
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// Treat every model-returned / search-derived URL as untrusted. Returns a
+// normalised http(s) URL, or null for anything else (javascript:, data:,
+// malformed). Callers must handle null rather than falling back to raw output.
+function safeUrl(u) {
+  if (!u) return null;
+  try {
+    const p = new URL(String(u).trim());
+    return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null;
+  } catch (e) { return null; }
+}
+
+function hostOf(u) {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return String(u ?? ''); }
+}
+
+// Single safe renderer for the website links. Returns '' when the URL is not
+// usable, so callers can supply their own placeholder.
+function websiteLinkHtml(url, style) {
+  const u = safeUrl(url);
+  if (!u) return '';
+  return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="${style}" title="${esc(u)}">${esc(hostOf(u))}</a>`;
+}
 function truncate(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : (s||''); }
 function today() { return new Date().toISOString().split('T')[0]; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
