@@ -3372,8 +3372,14 @@ function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt
 // malformed). Callers must handle null rather than falling back to raw output.
 function safeUrl(u) {
   if (!u) return null;
+  let s = String(u).trim();
+  // Models frequently return a bare host ("acme.com.sg") despite being asked
+  // for a full URL. new URL() throws on that, which would silently hide a
+  // perfectly good site. Assume https:// ONLY when there is no scheme at all —
+  // never rewrite an existing one, so javascript:/data: stay blocked below.
+  if (!/^[a-z][a-z0-9+.\-]*:/i.test(s)) s = 'https://' + s;
   try {
-    const p = new URL(String(u).trim());
+    const p = new URL(s);
     return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null;
   } catch (e) { return null; }
 }
