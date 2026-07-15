@@ -48,6 +48,7 @@ OUTPUT FORMAT (exact JSON):
 {
   "website": "https://...",
   "email": "info@example.com",
+  "email_source": "company_website",
   "phone": "+65 6XXX XXXX",
   "linkedin": "https://...",
   "description": "1-2 sentence summary of what they do",
@@ -59,6 +60,8 @@ OUTPUT FORMAT (exact JSON):
 For any field you cannot find, use null instead of a value.
 confidence must be one of: HIGH, MEDIUM, LOW, NONE
 verification_method must be one of: uen_match, address_match, name_only, unverified
+email_source must be one of: company_website, directory, linkedin, other, none
+  - use "none" whenever email is null
 
 IMPORTANT RULES:
 - NEVER invent contact info. If you cannot find an email, return null for email.
@@ -70,6 +73,8 @@ IMPORTANT RULES:
   page. NEVER guess or construct an email from the domain (do not invent
   "info@<domain>" if you did not actually see it). A correct null is far more
   useful than a fabricated address the team then has to clean up.
+- Set email_source to where you actually found the email. If you did not see it
+  published anywhere, email must be null and email_source must be "none".
 - NEVER assume similarly-named companies are the same. "Axiom Stratix" is NOT
   "Axiom Tech" — if the name doesn't match closely AND you can't confirm via
   UEN or address, set confidence LOW or NONE and say so in reasoning.
@@ -95,13 +100,103 @@ function extractJson(text) {
   return null;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Email validation
+// ──────────────────────────────────────────────────────────────────────────
+// We do three cheap checks before an email reaches the sales team's export:
+//   1. Format   — is it a well-formed address at all?
+//   2. Domain   — does the email domain match the company's website domain?
+//                 A match is a strong trust signal; a mismatch (e.g. a gmail
+//                 address, or a totally different domain) is worth flagging.
+//   3. Source   — did the AI say where it actually found the email?
+//
+// We deliberately do NOT do an MX/DNS lookup here: a domain having mail records
+// doesn't prove the specific mailbox exists, and it adds latency per company.
+
+// Reasonably strict but not pedantic. Rejects the obvious junk.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+// Strip protocol/www and take the registrable-ish part for comparison.
+function domainOf(urlOrEmail) {
+  if (!urlOrEmail) return null;
+  let host = String(urlOrEmail).trim().toLowerCase();
+  if (host.includes('@')) host = host.split('@').pop();
+  host = host.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  return host || null;
+}
+
+// Compare an email's domain against the website's domain. We treat a shared
+// last-two-labels (e.g. acme.com.sg vs mail.acme.com.sg) as a match.
+function domainsMatch(emailDomain, siteDomain) {
+  if (!emailDomain || !siteDomain) return false;
+  if (emailDomain === siteDomain) return true;
+  const tail = (d) => d.split('.').slice(-3).join('.');  // handles .com.sg
+  return tail(emailDomain) === tail(siteDomain)
+      || emailDomain.endsWith('.' + siteDomain)
+      || siteDomain.endsWith('.' + emailDomain);
+}
+
+// Free/personal mailbox providers — an email here is not a company address.
+const FREE_MAIL = new Set([
+  'gmail.com','yahoo.com','yahoo.com.sg','hotmail.com','outlook.com',
+  'live.com','icloud.com','qq.com','163.com','singnet.com.sg'
+]);
+
+// Returns { valid, domain_match, free_provider, verdict, note }
+// verdict: 'TRUSTED' | 'REVIEW' | 'INVALID' | 'NONE'
+function validateEmail(email, website, emailSource) {
+  if (!email) {
+    return { valid: false, domain_match: false, free_provider: false,
+             verdict: 'NONE', note: 'No email found' };
+  }
+  if (!EMAIL_RE.test(email)) {
+    return { valid: false, domain_match: false, free_provider: false,
+             verdict: 'INVALID', note: 'Malformed email address' };
+  }
+
+  const eDomain = domainOf(email);
+  const sDomain = domainOf(website);
+  const free = FREE_MAIL.has(eDomain);
+  const match = domainsMatch(eDomain, sDomain);
+
+  let verdict, note;
+  if (free) {
+    verdict = 'REVIEW';
+    note = 'Free mailbox provider — not a company domain';
+  } else if (match && emailSource === 'company_website') {
+    verdict = 'TRUSTED';
+    note = 'Domain matches website, found on official site';
+  } else if (match) {
+    verdict = 'TRUSTED';
+    note = 'Email domain matches company website';
+  } else if (!sDomain) {
+    verdict = 'REVIEW';
+    note = 'No website to compare the email domain against';
+  } else {
+    verdict = 'REVIEW';
+    note = `Email domain (${eDomain}) differs from website (${sDomain})`;
+  }
+
+  return { valid: true, domain_match: match, free_provider: free, verdict, note };
+}
+
 function normaliseResult(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
   const okConf = new Set(['HIGH', 'MEDIUM', 'LOW', 'NONE']);
   const okMethod = new Set(['uen_match', 'address_match', 'name_only', 'unverified']);
+  const okSource = new Set(['company_website', 'directory', 'linkedin', 'other', 'none']);
+
+  const emailSource = okSource.has(parsed.email_source) ? parsed.email_source : 'none';
+  const email = parsed.email || null;
+  const website = parsed.website || null;
+  const emailCheck = validateEmail(email, website, emailSource);
+
   return {
-    website: parsed.website || null,
-    email: parsed.email || null,
+    website,
+    // Drop malformed emails outright — a bad address is worse than none.
+    email: emailCheck.verdict === 'INVALID' ? null : email,
+    email_source: email ? emailSource : 'none',
+    email_check: emailCheck,
     phone: parsed.phone || null,
     linkedin: parsed.linkedin || null,
     description: parsed.description || '',

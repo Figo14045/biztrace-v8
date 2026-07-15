@@ -2505,7 +2505,27 @@ function renderContactCell(uen, enr) {
   const tip = reasonText ? ` title="${esc(reasonText)}"` : '';
   const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${enr.badge}</span>`;
   const phoneHtml = enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : '';
-  const emailHtml = enr.email ? ` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>` : '';
+
+  // Email + a trust marker from the server-side validation. TRUSTED means the
+  // email's domain matches the company website; REVIEW means it needs a human
+  // look before it goes to SmartReach.
+  let emailHtml = '';
+  if (enr.email) {
+    const chk = enr.email_check;
+    let marker = '';
+    if (chk) {
+      const src = enr.email_source && enr.email_source !== 'none'
+        ? ` (found on: ${enr.email_source.replace(/_/g,' ')})` : '';
+      const tipTxt = esc(chk.note + src);
+      if (chk.verdict === 'TRUSTED') {
+        marker = ` <span title="${tipTxt}" style="color:var(--green);font-size:10px">✓</span>`;
+      } else if (chk.verdict === 'REVIEW') {
+        marker = ` <span title="${tipTxt}" style="color:var(--amber,#f59e0b);font-size:10px">⚠</span>`;
+      }
+    }
+    emailHtml = ` <span style="color:var(--accent2);font-size:10px">${esc(enr.email)}</span>${marker}`;
+  }
+
   // Show "View candidates" link when verification is shaky and we have candidates
   const showCandidates = enr.candidates && enr.candidates.length > 0 &&
     ['UNVERIFIED', 'LIKELY', 'NO WEB'].includes(enr.badge);
@@ -2844,13 +2864,22 @@ async function exportCSV() {
 
 function exportEnrichedCSV() {
   const rows = allResults.filter(r => enrichData[r.uen]);
-  const enrichedRows = rows.map(r => ({
-    ...r,
-    website:  enrichData[r.uen]?.website  || '',
-    email:    enrichData[r.uen]?.email    || '',
-    phone:    enrichData[r.uen]?.phone    || '',
-    verified: enrichData[r.uen]?.badge    || '',
-  }));
+  const enrichedRows = rows.map(r => {
+    const e = enrichData[r.uen] || {};
+    const chk = e.email_check || {};
+    return {
+      ...r,
+      website:  e.website  || '',
+      email:    e.email    || '',
+      phone:    e.phone    || '',
+      verified: e.badge    || '',
+      // Email trust signals so the team can filter before SmartReach upload.
+      email_source:       e.email_source || 'none',
+      email_verdict:      chk.verdict    || 'NONE',
+      email_domain_match: chk.domain_match ? 'yes' : 'no',
+      email_note:         chk.note       || '',
+    };
+  });
   downloadCSV(enrichedRows, 'biztrace_enriched.csv');
 }
 
@@ -3016,9 +3045,10 @@ async function startEnrich() {
       console.warn('Enrich error for', row.uen, e.message);
     }
 
-    // Flash-Lite free tier allows 15 RPM (one request every 4s). 4.5s keeps
-    // Gemini free tier is the tightest (4.5s). Claude paid tier has high
-    // limits so a light 1.2s pace is plenty. SerpAPI has no per-minute pressure.
+    // Gemini free tier is the tightest: ~5-10 RPM, so 4.5s spacing keeps us
+    // safely under the per-minute cap. (Note: the 20/day cap is separate and
+    // cannot be avoided by slowing down.) Claude's paid tier has high limits,
+    // so 1.2s is plenty. SerpAPI has no per-minute pressure.
     await sleep(mode === 'ai' ? 4500 : (mode === 'claude' ? 1200 : 800));
   }
 
@@ -3112,6 +3142,8 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
     candidates: [],  // AI mode doesn't surface candidate list
     linkedin: result.linkedin || null,
     description: result.description || '',
+    email_source: result.email_source || 'none',
+    email_check: result.email_check || null,
     source: 'ai',
   };
 
@@ -3192,6 +3224,8 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
     candidates: [],
     linkedin: result.linkedin || null,
     description: result.description || '',
+    email_source: result.email_source || 'none',
+    email_check: result.email_check || null,
     source: 'claude',
   };
 

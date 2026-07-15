@@ -34,12 +34,25 @@
 //     raw_text: "..."  // included on parse failure for debugging
 //   }
 
-// Gemini 2.5 Flash-Lite: free tier gives 15 RPM / 1,000 requests-per-day,
-// versus only ~20/day on standard Flash. Quality is slightly lower but more
-// than sufficient for company contact lookup, and it still supports Google
-// Search grounding. If a region lacks grounding on Flash-Lite, fall back to
-// 'gemini-2.5-flash' or 'gemini-3-flash'.
-const GEMINI_MODEL = 'gemini-3.1-flash-lite';
+// Gemini 2.5 Flash-Lite. This is the only model verified to work on this
+// account WITH Google Search grounding.
+//
+// Observed free-tier limits on this account (NOT the published figures):
+//   - 20 requests per DAY (RPD). This is the binding constraint: one company
+//     enriched = one request, so ~20 companies/day per API key.
+//   - ~5-10 requests per minute (RPM), handled by the frontend throttle.
+//   - Search grounding has a separate, much larger budget (~1.5K/day) but it
+//     cannot be used once the 20 model requests are spent.
+//
+// Tried and rejected:
+//   - 'gemini-2.5-flash'      → same 20 RPD cap, no benefit.
+//   - 'gemini-3.1-flash-lite' → console shows 500 RPD, but this key gets a
+//     generic RESOURCE_EXHAUSTED with no limit/model named, i.e. no access.
+//
+// The 20/day ceiling is a billing limit, not a code problem. To lift it,
+// enable billing on the Google Cloud project, or use the Claude engine
+// (see claude-enrich.js), which has no daily cap.
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const CORS = {
@@ -77,6 +90,7 @@ OUTPUT FORMAT (exact JSON, no other text):
 {
   "website": "https://...",
   "email": "info@example.com",
+  "email_source": "company_website",
   "phone": "+65 6XXX XXXX",
   "linkedin": "https://...",
   "description": "1-2 sentence summary of what they do",
@@ -88,10 +102,22 @@ OUTPUT FORMAT (exact JSON, no other text):
 For any field you cannot find, use null instead of a value.
 confidence must be one of: HIGH, MEDIUM, LOW, NONE
 verification_method must be one of: uen_match, address_match, name_only, unverified
+email_source must be one of: company_website, directory, linkedin, other, none
+  - use "none" whenever email is null
 
 IMPORTANT RULES:
 - NEVER invent contact info. If you cannot find an email, return null for email.
-- NEVER assume similarly-named companies are the same.
+- EMAIL HUNTING: look beyond the homepage. Check the company's "Contact" or
+  "About" page, Singapore business directories, and LinkedIn before giving up.
+- EMAIL HONESTY: only return an email you actually SAW published on a real page.
+  NEVER guess or construct one from the domain — do not invent "info@<domain>"
+  if you did not actually see it written somewhere. A correct null is far more
+  useful to the sales team than a fabricated address they must clean up later.
+- Set email_source to where you actually found it. If you did not see it
+  published anywhere, email must be null and email_source must be "none".
+- NEVER assume similarly-named companies are the same. The registered ACRA name
+  often differs from the public brand name — if you cannot confirm they are the
+  same entity via UEN or address, set confidence LOW and explain in reasoning.
 - Prefer official sources (company website > government registry > social media > directories like Yellow Pages).
 - If the company is "Struck Off", "Cancelled", or "Dissolved", note this briefly in reasoning and set confidence to LOW even if you find historical info.
 - Use Singapore phone format with +65 country code.
@@ -162,18 +188,107 @@ function extractJson(text) {
   return null;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Email validation
+// ──────────────────────────────────────────────────────────────────────────
+// We do three cheap checks before an email reaches the sales team's export:
+//   1. Format   — is it a well-formed address at all?
+//   2. Domain   — does the email domain match the company's website domain?
+//                 A match is a strong trust signal; a mismatch (e.g. a gmail
+//                 address, or a totally different domain) is worth flagging.
+//   3. Source   — did the AI say where it actually found the email?
+//
+// We deliberately do NOT do an MX/DNS lookup here: a domain having mail records
+// doesn't prove the specific mailbox exists, and it adds latency per company.
+
+// Reasonably strict but not pedantic. Rejects the obvious junk.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+// Strip protocol/www and take the registrable-ish part for comparison.
+function domainOf(urlOrEmail) {
+  if (!urlOrEmail) return null;
+  let host = String(urlOrEmail).trim().toLowerCase();
+  if (host.includes('@')) host = host.split('@').pop();
+  host = host.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  return host || null;
+}
+
+// Compare an email's domain against the website's domain. We treat a shared
+// last-two-labels (e.g. acme.com.sg vs mail.acme.com.sg) as a match.
+function domainsMatch(emailDomain, siteDomain) {
+  if (!emailDomain || !siteDomain) return false;
+  if (emailDomain === siteDomain) return true;
+  const tail = (d) => d.split('.').slice(-3).join('.');  // handles .com.sg
+  return tail(emailDomain) === tail(siteDomain)
+      || emailDomain.endsWith('.' + siteDomain)
+      || siteDomain.endsWith('.' + emailDomain);
+}
+
+// Free/personal mailbox providers — an email here is not a company address.
+const FREE_MAIL = new Set([
+  'gmail.com','yahoo.com','yahoo.com.sg','hotmail.com','outlook.com',
+  'live.com','icloud.com','qq.com','163.com','singnet.com.sg'
+]);
+
+// Returns { valid, domain_match, free_provider, verdict, note }
+// verdict: 'TRUSTED' | 'REVIEW' | 'INVALID' | 'NONE'
+function validateEmail(email, website, emailSource) {
+  if (!email) {
+    return { valid: false, domain_match: false, free_provider: false,
+             verdict: 'NONE', note: 'No email found' };
+  }
+  if (!EMAIL_RE.test(email)) {
+    return { valid: false, domain_match: false, free_provider: false,
+             verdict: 'INVALID', note: 'Malformed email address' };
+  }
+
+  const eDomain = domainOf(email);
+  const sDomain = domainOf(website);
+  const free = FREE_MAIL.has(eDomain);
+  const match = domainsMatch(eDomain, sDomain);
+
+  let verdict, note;
+  if (free) {
+    verdict = 'REVIEW';
+    note = 'Free mailbox provider — not a company domain';
+  } else if (match && emailSource === 'company_website') {
+    verdict = 'TRUSTED';
+    note = 'Domain matches website, found on official site';
+  } else if (match) {
+    verdict = 'TRUSTED';
+    note = 'Email domain matches company website';
+  } else if (!sDomain) {
+    verdict = 'REVIEW';
+    note = 'No website to compare the email domain against';
+  } else {
+    verdict = 'REVIEW';
+    note = `Email domain (${eDomain}) differs from website (${sDomain})`;
+  }
+
+  return { valid: true, domain_match: match, free_provider: free, verdict, note };
+}
+
 // Normalise the AI response — fill in defaults, ensure expected fields exist.
 function normaliseResult(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
   const allowedConfidence = new Set(['HIGH', 'MEDIUM', 'LOW', 'NONE']);
   const allowedMethod = new Set(['uen_match', 'address_match', 'name_only', 'unverified']);
+  const allowedSource = new Set(['company_website', 'directory', 'linkedin', 'other', 'none']);
 
   const confidence = allowedConfidence.has(parsed.confidence) ? parsed.confidence : 'NONE';
   const method = allowedMethod.has(parsed.verification_method) ? parsed.verification_method : 'unverified';
+  const emailSource = allowedSource.has(parsed.email_source) ? parsed.email_source : 'none';
+
+  const email = parsed.email || null;
+  const website = parsed.website || null;
+  const emailCheck = validateEmail(email, website, emailSource);
 
   return {
-    website: parsed.website || null,
-    email: parsed.email || null,
+    website,
+    // Drop malformed emails outright — a bad address is worse than none.
+    email: emailCheck.verdict === 'INVALID' ? null : email,
+    email_source: email ? emailSource : 'none',
+    email_check: emailCheck,
     phone: parsed.phone || null,
     linkedin: parsed.linkedin || null,
     description: parsed.description || '',
