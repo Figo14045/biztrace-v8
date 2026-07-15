@@ -210,7 +210,33 @@ function extractGrounding(geminiResp) {
   const out = { queries: [], sources: [] };
   try {
     const gm = geminiResp?.candidates?.[0]?.groundingMetadata;
-    if (!gm) return out;
+    if (!gm) {
+      // TEMPORARY (Patch B.1): tell us where the metadata actually lives.
+      out.debug = {
+        found_groundingMetadata: false,
+        candidate_keys: Object.keys(geminiResp?.candidates?.[0] || {}),
+        response_keys: Object.keys(geminiResp || {})
+      };
+      return out;
+    }
+
+    // TEMPORARY (Patch B.1): webSearchQueries arrives but groundingChunks is
+    // empty, while the model's answer clearly contains facts read off a page.
+    // Dump the real shape once so we stop guessing. Remove after Patch C.
+    out.debug = {
+      found_groundingMetadata: true,
+      metadata_keys: Object.keys(gm),
+      chunk_count: Array.isArray(gm.groundingChunks) ? gm.groundingChunks.length : null,
+      support_count: Array.isArray(gm.groundingSupports) ? gm.groundingSupports.length : null,
+      first_chunk: (gm.groundingChunks || [])[0] || null,
+      first_support: (gm.groundingSupports || [])[0] || null,
+      has_searchEntryPoint: !!gm.searchEntryPoint,
+      retrieval_metadata: gm.retrievalMetadata || null,
+      // everything except searchEntryPoint, which is a large HTML blob
+      raw: JSON.stringify(Object.fromEntries(
+        Object.entries(gm).filter(([k]) => k !== 'searchEntryPoint')
+      )).slice(0, 4000)
+    };
 
     if (Array.isArray(gm.webSearchQueries)) {
       out.queries = gm.webSearchQueries.filter(q => typeof q === 'string').slice(0, 10);
