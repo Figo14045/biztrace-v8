@@ -67,63 +67,72 @@ function buildPrompt(company) {
   // so the model knows what's unknown vs literally the string "na".
   const clean = (v) => (v && v !== 'na' && v !== '') ? v : '(not provided)';
 
-  return `You are a research assistant helping a Singapore B2B sales team find contact information for a registered ACRA company.
+  return `You are helping a Singapore B2B sales team work out which website, if any, belongs to a company registered with ACRA.
 
-COMPANY DETAILS:
-- Entity name: ${clean(company.entity_name)}
-- UEN (unique registration number): ${clean(company.uen)}
+ACRA REGISTRY RECORD (this is ground truth — it came from the official registry):
+- Registered name: ${clean(company.entity_name)}
+- UEN: ${clean(company.uen)}
 - Entity type: ${clean(company.entity_type_description)}
 - Status: ${clean(company.entity_status_description)}
 - Registered address: ${clean(company.full_address)}
-- Primary SSIC (industry): ${clean(company.primary_ssic_code)} - ${clean(company.primary_ssic_description)}
+- Postal code: ${clean(company.postal_code)}
+- Primary SSIC (industry code): ${clean(company.primary_ssic_code)}
 
 YOUR TASK:
-Search the web for this specific company. Verify it's the correct one (not a similarly-named entity). Then return contact information in the EXACT JSON format below — no prose, no markdown fences.
+Search the web and return UP TO THREE candidate official websites that might belong to this registered entity. Then respond with ONLY a JSON object — no prose, no markdown fences.
 
-VERIFICATION CRITERIA (apply in order):
-1. UEN match: best — if a website shows this exact UEN, confidence is HIGH
-2. Address match: good — if the website lists the registered Singapore address (postal code or street), confidence is MEDIUM-HIGH
-3. Name match only: weak — if only the name matches and you can't verify the address or UEN, confidence is LOW
-4. Cannot find: return nulls and confidence "NONE"
+You are NOT being asked for an email address or a phone number. Do not supply them. Another system retrieves those directly from the page. Your only job is to work out WHICH SITE IS THEM, and to say honestly how sure you are.
+
+CRITICAL — THE CIRCULAR EVIDENCE TRAP:
+Sites such as sgpbusiness.com, companies.sg, opencorporates.com, sgcompanyinfo, bizfile listings and similar business directories are COPIES OF THE ACRA REGISTRY. They contain the same UEN, name and registered address that is printed above.
+
+Finding the UEN on one of those sites proves NOTHING. It tells you the registry says what the registry says. It is circular. It must NEVER produce HIGH confidence.
+A UEN is strong evidence ONLY when it appears on a site that is NOT a registry copy — typically the company's own website (often in a footer, on an About page, or on an invoice/terms page).
+
+Directories are still useful for one thing: they sometimes name a website or a trading name. Treat that as a LEAD to investigate, never as proof.
+
+CRITICAL — DO NOT REJECT ON NAME ALONE:
+The registered ACRA name and the public trading brand are frequently different. "AXIOM STRATIX PTE LTD" could genuinely trade as "Axiom Tech". Do NOT discard a candidate merely because the brand differs from the registered name. Weigh the other evidence.
+
+But the reverse trap is worse: DO NOT claim two companies are the same just because they share a word. A shared word plus a DIFFERENT INDUSTRY or a DIFFERENT COUNTRY means they are almost certainly unrelated — say so, and mark it LOW.
+
+EVIDENCE TO WEIGH (in rough order of strength):
+1. Exact UEN shown on the candidate's own (non-directory) site
+2. Registered address or postal code shown on the candidate's site
+3. Former/previous company name matching the candidate's brand
+4. Business activity consistent with the SSIC code, AND a genuine Singapore presence
+5. Name similarity only — weakest
+
+CONFIDENCE — be honest, an unhelpful truth beats a helpful lie:
+- "HIGH"   — UEN or registered address confirmed on the candidate's OWN site. A real link exists between the registry entity and this web presence.
+- "MEDIUM" — strong brand, former-name or business-activity evidence, plus a Singapore presence. Plausible, not proven.
+- "LOW"    — name similarity only, OR the UEN was found only in registry-copy directories, OR the activity/country does not line up.
+
+verification_method must be one of:
+  uen_on_own_site, address_match, former_name_match, brand_and_activity_match, name_only, directory_only, unverified
 
 OUTPUT FORMAT (exact JSON, no other text):
 {
-  "website": "https://...",
-  "email": "info@example.com",
-  "email_source": "company_website",
-  "phone": "+65 6XXX XXXX",
-  "linkedin": "https://...",
-  "description": "1-2 sentence summary of what they do",
-  "confidence": "HIGH",
-  "verification_method": "uen_match",
-  "reasoning": "MAXIMUM 2 sentences explaining how you verified this is the right company. Be brief. Cite source URLs short — domain only."
+  "candidates": [
+    {
+      "company_name": "Public/trading name of this candidate",
+      "website": "https://example.com",
+      "confidence": "MEDIUM",
+      "verification_method": "brand_and_activity_match",
+      "reasoning": "MAXIMUM 2 sentences. Name the evidence and the source domain. If you are unsure, say what does not line up."
+    }
+  ],
+  "description": "1-2 sentence summary of what the ACRA entity does, based on the registry record and anything credible you found."
 }
 
-For any field you cannot find, use null instead of a value.
-confidence must be one of: HIGH, MEDIUM, LOW, NONE
-verification_method must be one of: uen_match, address_match, name_only, unverified
-email_source must be one of: company_website, directory, linkedin, other, none
-  - use "none" whenever email is null
-
-IMPORTANT RULES:
-- NEVER invent contact info. If you cannot find an email, return null for email.
-- EMAIL HUNTING: look beyond the homepage. Check the company's "Contact" or
-  "About" page, Singapore business directories, and LinkedIn before giving up.
-- EMAIL HONESTY: only return an email you actually SAW published on a real page.
-  NEVER guess or construct one from the domain — do not invent "info@<domain>"
-  if you did not actually see it written somewhere. A correct null is far more
-  useful to the sales team than a fabricated address they must clean up later.
-- Set email_source to where you actually found it. If you did not see it
-  published anywhere, email must be null and email_source must be "none".
-- NEVER assume similarly-named companies are the same. The registered ACRA name
-  often differs from the public brand name — if you cannot confirm they are the
-  same entity via UEN or address, set confidence LOW and explain in reasoning.
-- Prefer official sources (company website > government registry > social media > directories like Yellow Pages).
-- If the company is "Struck Off", "Cancelled", or "Dissolved", note this briefly in reasoning and set confidence to LOW even if you find historical info.
-- Use Singapore phone format with +65 country code.
-- For email, return only a general inquiry email (info@, contact@, enquiries@, sales@) — not a person's personal email.
-- Keep description and reasoning SHORT. Total response must be under 800 characters.
-- Output ONLY the JSON object. No markdown code fences. No explanations outside the JSON.`;
+RULES:
+- Up to THREE candidates. Best first.
+- If you find NO plausible website at all, return "candidates": [] and still give a description. That is a useful, honest answer — do not invent a candidate to fill the space.
+- If a company appears to have no web presence (small firm, residential registered address), say exactly that in the description.
+- Never invent a URL. Only list a site you actually saw in search results.
+- Do NOT return email or phone fields.
+- Keep reasoning SHORT and factual. Cite domains, not full URLs.
+- Output ONLY the JSON object.`;
 }
 
 // Attempt to extract a JSON object from arbitrary text output.
@@ -186,6 +195,39 @@ function extractJson(text) {
   }
 
   return null;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Grounding metadata
+// ──────────────────────────────────────────────────────────────────────────
+// Gemini tells us which pages Google fed it and what it searched for. We were
+// discarding all of it. These are the raw leads Patch C hands to fetch-contact.
+//
+// CAVEAT: groundingChunks[].web.uri is usually a vertexaisearch redirect
+// wrapper, NOT the publisher URL. web.title is typically the bare domain.
+// We return both untouched and let the caller resolve them.
+function extractGrounding(geminiResp) {
+  const out = { queries: [], sources: [] };
+  try {
+    const gm = geminiResp?.candidates?.[0]?.groundingMetadata;
+    if (!gm) return out;
+
+    if (Array.isArray(gm.webSearchQueries)) {
+      out.queries = gm.webSearchQueries.filter(q => typeof q === 'string').slice(0, 10);
+    }
+
+    const seen = new Set();
+    for (const chunk of (gm.groundingChunks || [])) {
+      const w = chunk && chunk.web;
+      if (!w || !w.uri || seen.has(w.uri)) continue;
+      seen.add(w.uri);
+      out.sources.push({ url: w.uri, title: w.title || null });
+      if (out.sources.length >= 20) break;
+    }
+  } catch (e) {
+    // Grounding is a bonus, never a reason to fail the request.
+  }
+  return out;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -284,34 +326,123 @@ function validateEmail(email, website, emailSource) {
 }
 
 // Normalise the AI response — fill in defaults, ensure expected fields exist.
+const OK_CONFIDENCE = new Set(['HIGH', 'MEDIUM', 'LOW', 'NONE']);
+const OK_METHOD = new Set([
+  'uen_on_own_site', 'address_match', 'former_name_match',
+  'brand_and_activity_match', 'name_only', 'directory_only', 'unverified',
+  // legacy values, still accepted so an older cached prompt cannot break us
+  'uen_match'
+]);
+
+// Registry copies. A UEN found on one of these is circular evidence: it just
+// restates the ACRA record we sent in. Cap such candidates at LOW no matter
+// what the model claimed.
+const REGISTRY_MIRRORS = [
+  'sgpbusiness.com', 'companies.sg', 'opencorporates.com', 'sgcompanyinfo.com',
+  'bizfile.gov.sg', 'sgcompanies.co', 'singaporecompanies', 'recordowl.com',
+  'entitysearch', 'companylist.sg'
+];
+
+function hostOfUrl(u) {
+  try { return new URL(String(u).trim()).hostname.toLowerCase().replace(/^www\./, ''); }
+  catch (e) { return null; }
+}
+
+function isRegistryMirror(url) {
+  const h = hostOfUrl(url);
+  if (!h) return false;
+  return REGISTRY_MIRRORS.some(d => h === d || h.endsWith('.' + d) || h.includes(d));
+}
+
+// Only http(s). Returns a normalised URL or null.
+function normaliseUrl(u) {
+  if (!u) return null;
+  let s = String(u).trim();
+  if (!/^[a-z][a-z0-9+.\-]*:/i.test(s)) s = 'https://' + s;
+  try {
+    const p = new URL(s);
+    return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null;
+  } catch (e) { return null; }
+}
+
+function normaliseCandidates(parsed) {
+  const raw = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+  const out = [];
+  const seen = new Set();
+
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') continue;
+    const website = normaliseUrl(c.website);
+    if (!website) continue;                 // a candidate with no usable URL is not a candidate
+    const host = hostOfUrl(website);
+    if (seen.has(host)) continue;
+    seen.add(host);
+
+    let confidence = OK_CONFIDENCE.has(c.confidence) ? c.confidence : 'LOW';
+    let method = OK_METHOD.has(c.verification_method) ? c.verification_method : 'unverified';
+    let note = '';
+
+    // Server-side enforcement of the circular-evidence rule. The prompt asks
+    // for this, but the prompt is a request; this is a guarantee.
+    if (isRegistryMirror(website)) {
+      if (confidence !== 'LOW') note = 'Downgraded: registry-copy directory, not the company website.';
+      confidence = 'LOW';
+      method = 'directory_only';
+    }
+    if (method === 'uen_match' || method === 'directory_only') {
+      // Legacy 'uen_match' cannot be trusted to mean "on their own site".
+      if (confidence === 'HIGH' && method === 'uen_match') {
+        confidence = 'MEDIUM';
+        note = 'Downgraded: UEN match not confirmed as being on the company\'s own site.';
+      }
+    }
+
+    out.push({
+      company_name: String(c.company_name || '').slice(0, 200) || null,
+      website,
+      confidence,
+      verification_method: method,
+      reasoning: String(c.reasoning || '').slice(0, 500) + (note ? ' ' + note : '')
+    });
+    if (out.length >= 3) break;
+  }
+
+  const rank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
+  out.sort((a, b) => rank[b.confidence] - rank[a.confidence]);
+  return out;
+}
+
+// Builds the response. `result` keeps the legacy shape so the existing frontend
+// keeps rendering; `candidates` is the new contract Patch C consumes.
 function normaliseResult(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
-  const allowedConfidence = new Set(['HIGH', 'MEDIUM', 'LOW', 'NONE']);
-  const allowedMethod = new Set(['uen_match', 'address_match', 'name_only', 'unverified']);
-  const allowedSource = new Set(['company_website', 'directory', 'linkedin', 'other', 'none']);
 
-  const confidence = allowedConfidence.has(parsed.confidence) ? parsed.confidence : 'NONE';
-  const method = allowedMethod.has(parsed.verification_method) ? parsed.verification_method : 'unverified';
-  const emailSource = allowedSource.has(parsed.email_source) ? parsed.email_source : 'none';
+  const candidates = normaliseCandidates(parsed);
+  const best = candidates[0] || null;
 
-  const email = cleanEmail(parsed.email);
-  const website = parsed.website || null;
-  const emailCheck = validateEmail(email, website, emailSource);
-  // A malformed address is worse than none — drop it, and keep email_source
-  // consistent with what actually survives into the export.
-  const finalEmail = emailCheck.verdict === 'INVALID' ? null : email;
+  // Gemini is no longer asked for contacts. If a stray value appears anyway it
+  // has no source page behind it, so it does not reach the team.
+  const emailCheck = validateEmail(null, null, 'none');
 
   return {
-    website,
-    email: finalEmail,
-    email_source: finalEmail ? emailSource : 'none',
+    // legacy fields — frontend compatibility
+    website: best ? best.website : null,
+    email: null,
+    email_source: 'none',
     email_check: emailCheck,
-    phone: parsed.phone || null,
-    linkedin: parsed.linkedin || null,
-    description: parsed.description || '',
-    confidence,
-    verification_method: method,
-    reasoning: parsed.reasoning || ''
+    phone: null,
+    linkedin: null,
+    description: String(parsed.description || '').slice(0, 400),
+    confidence: best ? best.confidence : 'NONE',
+    verification_method: best ? best.verification_method : 'unverified',
+    reasoning: best ? best.reasoning : '',
+
+    // new: identity is a separate fact from contact (spec §6)
+    identity_confidence: best ? best.confidence : 'NONE',
+    identity_reason: best ? best.reasoning : 'No plausible website found.',
+    contact_confidence: 'NONE',
+    contact_reason: 'Contacts not yet retrieved — deterministic extraction lands in Patch C.',
+    candidate_count: candidates.length
   };
 }
 
@@ -402,14 +533,31 @@ exports.handler = async function (event) {
     };
   }
 
+  const grounding = extractGrounding(geminiResp);
+
   const parsed = extractJson(text);
   if (!parsed) {
+    // Spec §9: malformed JSON must still yield a usable result when we have
+    // grounding URLs — those are the leads Patch C needs. Return ok:true with
+    // an empty verdict rather than throwing the grounding away.
     return {
       statusCode: 200,
       headers: CORS,
       body: JSON.stringify({
-        ok: false,
-        error: 'Could not parse JSON from Gemini response',
+        ok: true,
+        warning: 'json_parse_failed',
+        result: {
+          website: null, email: null, email_source: 'none',
+          email_check: validateEmail(null, null, 'none'),
+          phone: null, linkedin: null, description: '',
+          confidence: 'NONE', verification_method: 'unverified', reasoning: '',
+          identity_confidence: 'NONE',
+          identity_reason: 'Gemini returned unparseable JSON; grounding URLs retained.',
+          contact_confidence: 'NONE', contact_reason: 'Not retrieved.',
+          candidate_count: 0
+        },
+        candidates: [],
+        grounding,
         raw_text: text.slice(0, 1500)
       })
     };
@@ -431,6 +579,11 @@ exports.handler = async function (event) {
   return {
     statusCode: 200,
     headers: CORS,
-    body: JSON.stringify({ ok: true, result })
+    body: JSON.stringify({
+      ok: true,
+      result,
+      candidates: normaliseCandidates(parsed),
+      grounding
+    })
   };
 };
