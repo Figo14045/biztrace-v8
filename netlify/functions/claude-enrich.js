@@ -116,6 +116,21 @@ function extractJson(text) {
 // Reasonably strict but not pedantic. Rejects the obvious junk.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
+// Normalise what the model actually hands us before judging it. Observed real
+// outputs: "mailto:x@y.com", " x@y.com ", "a@y.com, b@y.com", "<x@y.com>",
+// "x@y.com." — all of which are recoverable. Without this, a stray space or a
+// second address made a good email INVALID and it was dropped on the floor;
+// worse, a "mailto:" prefix sailed through both the regex and the domain check
+// and exported as TRUSTED.
+function cleanEmail(input) {
+  if (!input) return null;
+  let e = String(input).trim().replace(/^mailto:/i, '');
+  const first = e.split(/[,;]|\s+/).filter(Boolean)[0];
+  if (!first) return null;
+  e = first.replace(/^[<("']+/, '').replace(/[>)"'.,;]+$/, '');
+  return e || null;
+}
+
 // Strip protocol/www and take the registrable-ish part for comparison.
 function domainOf(urlOrEmail) {
   if (!urlOrEmail) return null;
@@ -187,15 +202,17 @@ function normaliseResult(parsed) {
   const okSource = new Set(['company_website', 'directory', 'linkedin', 'other', 'none']);
 
   const emailSource = okSource.has(parsed.email_source) ? parsed.email_source : 'none';
-  const email = parsed.email || null;
+  const email = cleanEmail(parsed.email);
   const website = parsed.website || null;
   const emailCheck = validateEmail(email, website, emailSource);
+  // A malformed address is worse than none — drop it, and keep email_source
+  // consistent with what actually survives into the export.
+  const finalEmail = emailCheck.verdict === 'INVALID' ? null : email;
 
   return {
     website,
-    // Drop malformed emails outright — a bad address is worse than none.
-    email: emailCheck.verdict === 'INVALID' ? null : email,
-    email_source: email ? emailSource : 'none',
+    email: finalEmail,
+    email_source: finalEmail ? emailSource : 'none',
     email_check: emailCheck,
     phone: parsed.phone || null,
     linkedin: parsed.linkedin || null,
