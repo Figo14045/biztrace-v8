@@ -1177,7 +1177,13 @@ const DEFAULT_FIELDS = [
   'company_type_description','primary_ssic_code','primary_ssic_description',
   'postal_code','block','street_name','level_no','unit_no','building_name',
   'no_of_officers','annual_return_date','registration_incorporation_date',
-  'account_due_date','uen_of_audit_firm1','name_of_audit_firm1','has_auditor'
+  'account_due_date','uen_of_audit_firm1','name_of_audit_firm1','has_auditor',
+  // full_address is COMPUTED by query.js (block + street + unit + building +
+  // postal). It is not a real Turso column, so SELECT * never returns it and
+  // it must be requested explicitly. It was missing, so every enrichment ran
+  // with "Registered address: (not provided)" — the address tier of the
+  // verification ladder could never fire.
+  'full_address'
 ];
 
 // Convert a PostgREST-style params object (used everywhere in BizTrace today)
@@ -3126,7 +3132,12 @@ async function retrieveContacts(row, candidates) {
     const r = await fetch('/.netlify/functions/fetch-contact', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uen: row.uen, name: row.entity_name, results })
+      body: JSON.stringify({
+        uen: row.uen, name: row.entity_name, results,
+        // A SG postal code on the retrieved page is a hard entity link, and
+        // far more common than a UEN in a footer.
+        postal_code: row.postal_code, building_name: row.building_name
+      })
     });
     if (!r.ok) return null;
     return await r.json();
@@ -3148,6 +3159,12 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
         entity_type_description: row.entity_type_description,
         entity_status_description: row.entity_status_description,
         full_address: row.full_address,
+        // The address is the strongest disambiguator when a registered name
+        // and a public brand differ — which is the whole problem. Send the
+        // parts too: a SG postal code identifies exactly one building.
+        postal_code: row.postal_code,
+        building_name: row.building_name,
+        street_name: row.street_name,
         primary_ssic_code: row.primary_ssic_code,
         primary_ssic_description: row.primary_ssic_description,
       }
@@ -3352,6 +3369,8 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
         entity_type_description: row.entity_type_description,
         entity_status_description: row.entity_status_description,
         full_address: row.full_address,
+        postal_code: row.postal_code,
+        building_name: row.building_name,
         primary_ssic_code: row.primary_ssic_code,
         primary_ssic_description: row.primary_ssic_description,
       }

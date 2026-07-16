@@ -75,7 +75,9 @@ ACRA REGISTRY RECORD (this is ground truth — it came from the official registr
 - Entity type: ${clean(company.entity_type_description)}
 - Status: ${clean(company.entity_status_description)}
 - Registered address: ${clean(company.full_address)}
-- Postal code: ${clean(company.postal_code)}
+- Postal code: ${clean(company.postal_code)}  <-- a Singapore postal code identifies ONE building
+- Building: ${clean(company.building_name)}
+- Street: ${clean(company.street_name)}
 - Primary SSIC (industry code): ${clean(company.primary_ssic_code)}
 
 YOUR TASK:
@@ -93,6 +95,11 @@ Directories are still useful for one thing: they sometimes name a website or a t
 
 CRITICAL — DO NOT REJECT ON NAME ALONE:
 The registered ACRA name and the public trading brand are frequently different. "AXIOM STRATIX PTE LTD" could genuinely trade as "Axiom Tech". Do NOT discard a candidate merely because the brand differs from the registered name. Weigh the other evidence.
+
+USE THE ADDRESS. It is the strongest evidence you have when the names differ.
+- The postal code above identifies exactly ONE building in Singapore. If a candidate site publishes that postal code, or that building name, or that street, on its contact/about page, that is a REAL link to this entity — regardless of what the brand is called.
+- Search for the address, not only the name. A brand you have never heard of, sitting at this exact address, is far more likely to be them than a famous company with a similar name in another country.
+- Conversely: a candidate in a DIFFERENT COUNTRY cannot be this entity. This is a SINGAPORE registered entity at the Singapore address above. If the candidate is Australian, Indian, British — say so and mark LOW, no matter how similar the name is.
 
 But the reverse trap is worse: DO NOT claim two companies are the same just because they share a word. A shared word plus a DIFFERENT INDUSTRY or a DIFFERENT COUNTRY means they are almost certainly unrelated — say so, and mark it LOW.
 

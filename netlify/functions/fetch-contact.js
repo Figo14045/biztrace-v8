@@ -214,13 +214,22 @@ async function fetchPage(url, budgetMs) {
 }
 
 // Determine trust badge
-function getBadge(html, uen, companyName) {
+function getBadge(html, uen, companyName, postalCode) {
   if (!html) return 'UNVERIFIED';
   const lower = html.toLowerCase();
   const uenClean = (uen || '').toLowerCase();
-  const nameClean = (companyName || '').toLowerCase();
 
+  // A UEN on the page is conclusive.
   if (uenClean && lower.includes(uenClean)) return 'VERIFIED';
+
+  // So is the registered postal code. A Singapore postal code identifies one
+  // building, and companies publish their address far more often than their
+  // UEN — so in practice this is the realistic route to VERIFIED. Require the
+  // 6 digits to stand alone, so we don't match a phone number or an order id.
+  const pc = String(postalCode || '').replace(/\D/g, '');
+  if (pc.length === 6 && new RegExp('(?:^|[^0-9])' + pc + '(?:[^0-9]|$)').test(lower)) {
+    return 'VERIFIED';
+  }
 
   // Check if significant part of company name appears on page
   const keywords = extractKeywords(companyName);
@@ -374,16 +383,18 @@ exports.handler = async function(event) {
   const timeLeft = () => TOTAL_FETCH_BUDGET_MS - (Date.now() - startedAt);
 
   // Support both POST (preferred) and GET
-  let uen, name, results;
+  let uen, name, results, postalCode = null;
   if (event.httpMethod === 'POST' && event.body) {
     const body = JSON.parse(event.body);
     uen     = body.uen     || '';
     name    = body.name    || '';
     results = body.results || [];
+    postalCode = body.postal_code || null;
   } else {
     const params = event.queryStringParameters || {};
     uen     = params.uen  || '';
     name    = decodeURIComponent(params.name || '');
+    postalCode = params.postal_code || null;
     results = JSON.parse(decodeURIComponent(params.results || '[]'));
   }
 
@@ -527,7 +538,7 @@ exports.handler = async function(event) {
 
       // Identity: the UEN on a retrieved page is the only thing that earns
       // VERIFIED. Record WHICH page proved it.
-      const b = getBadge(html, uen, name);
+      const b = getBadge(html, uen, name, postalCode);
       if (b === 'VERIFIED' && siteBadge !== 'VERIFIED') { siteBadge = 'VERIFIED'; identityUrl = pageUrl; }
       else if (siteBadge === 'UNVERIFIED' && b !== 'UNVERIFIED') { siteBadge = b; identityUrl = identityUrl || pageUrl; }
 
