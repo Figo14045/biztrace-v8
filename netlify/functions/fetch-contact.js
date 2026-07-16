@@ -214,7 +214,7 @@ async function fetchPage(url, budgetMs) {
 }
 
 // Determine trust badge
-function getBadge(html, uen, companyName, postalCode) {
+function getBadge(html, uen, companyName) {
   if (!html) return 'UNVERIFIED';
   const lower = html.toLowerCase();
   const uenClean = (uen || '').toLowerCase();
@@ -222,14 +222,16 @@ function getBadge(html, uen, companyName, postalCode) {
   // A UEN on the page is conclusive.
   if (uenClean && lower.includes(uenClean)) return 'VERIFIED';
 
-  // So is the registered postal code. A Singapore postal code identifies one
-  // building, and companies publish their address far more often than their
-  // UEN — so in practice this is the realistic route to VERIFIED. Require the
-  // 6 digits to stand alone, so we don't match a phone number or an order id.
-  const pc = String(postalCode || '').replace(/\D/g, '');
-  if (pc.length === 6 && new RegExp('(?:^|[^0-9])' + pc + '(?:[^0-9]|$)').test(lower)) {
-    return 'VERIFIED';
-  }
+  // NOT the postal code. A postal code on a page proves the candidate sits in
+  // that BUILDING, not that it IS this company. Ocean Financial Centre (018983)
+  // has hundreds of tenants; any of their sites would match. Worse, this tool
+  // exists to find companies at VIRTUAL offices — where the registered address
+  // is a corporate secretary's mailbox shared by dozens or hundreds of
+  // unrelated entities, and the company may have no presence there at all.
+  //
+  // It cannot be rescued by density either: densityTier() keys on
+  // postal+level+unit, but a page printing "018983" never says which unit.
+  // So the only safe grep is the UEN. VERIFIED stays rare, and that is honest.
 
   // Check if significant part of company name appears on page
   const keywords = extractKeywords(companyName);
@@ -538,7 +540,7 @@ exports.handler = async function(event) {
 
       // Identity: the UEN on a retrieved page is the only thing that earns
       // VERIFIED. Record WHICH page proved it.
-      const b = getBadge(html, uen, name, postalCode);
+      const b = getBadge(html, uen, name);
       if (b === 'VERIFIED' && siteBadge !== 'VERIFIED') { siteBadge = 'VERIFIED'; identityUrl = pageUrl; }
       else if (siteBadge === 'UNVERIFIED' && b !== 'UNVERIFIED') { siteBadge = b; identityUrl = identityUrl || pageUrl; }
 

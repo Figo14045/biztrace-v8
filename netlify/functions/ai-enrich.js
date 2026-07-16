@@ -62,6 +62,34 @@ const CORS = {
   'Content-Type': 'application/json'
 };
 
+// The registered address is only evidence when it is not a shared mailbox.
+// BizTrace exists to find companies at virtual offices, so a large share of
+// these addresses are corporate secretaries — the company may have no presence
+// there at all. The frontend already computes this density (postal+level+unit)
+// for the Virtual Office column; we simply tell the model what it means.
+function addressNote(company) {
+  const n = Number(company.address_shared_count);
+  if (!Number.isFinite(n) || n <= 0) {
+    return '- Address reliability: unknown — do not rely on the address for identity.';
+  }
+  if (n >= 30) {
+    return `- Address reliability: NONE. ${n} other companies are registered at this exact unit. ` +
+           `This is a virtual office / corporate secretary — a mailbox, not a place of business. ` +
+           `The company may have no presence there at all. Use the address ONLY to confirm the ` +
+           `entity is Singapore-based. It tells you NOTHING about which website is theirs.`;
+  }
+  if (n >= 10) {
+    return `- Address reliability: LOW. ${n} companies share this exact unit (shared office or a ` +
+           `family of holding companies). Weak corroboration at best.`;
+  }
+  if (n >= 2) {
+    return `- Address reliability: GOOD. Only ${n} companies are registered at this unit. If a ` +
+           `candidate site publishes this address, that is real corroboration of identity.`;
+  }
+  return `- Address reliability: STRONG. This is the only company registered at this unit. A ` +
+         `candidate site publishing this address is strong corroboration of identity.`;
+}
+
 function buildPrompt(company) {
   // Defensive: replace 'na' or empty strings with explicit "not provided"
   // so the model knows what's unknown vs literally the string "na".
@@ -75,10 +103,8 @@ ACRA REGISTRY RECORD (this is ground truth — it came from the official registr
 - Entity type: ${clean(company.entity_type_description)}
 - Status: ${clean(company.entity_status_description)}
 - Registered address: ${clean(company.full_address)}
-- Postal code: ${clean(company.postal_code)}  <-- a Singapore postal code identifies ONE building
-- Building: ${clean(company.building_name)}
-- Street: ${clean(company.street_name)}
 - Primary SSIC (industry code): ${clean(company.primary_ssic_code)}
+${addressNote(company)}
 
 YOUR TASK:
 Search the web and return UP TO THREE candidate official websites that might belong to this registered entity. Then respond with ONLY a JSON object — no prose, no markdown fences.
@@ -96,10 +122,12 @@ Directories are still useful for one thing: they sometimes name a website or a t
 CRITICAL — DO NOT REJECT ON NAME ALONE:
 The registered ACRA name and the public trading brand are frequently different. "AXIOM STRATIX PTE LTD" could genuinely trade as "Axiom Tech". Do NOT discard a candidate merely because the brand differs from the registered name. Weigh the other evidence.
 
-USE THE ADDRESS. It is the strongest evidence you have when the names differ.
-- The postal code above identifies exactly ONE building in Singapore. If a candidate site publishes that postal code, or that building name, or that street, on its contact/about page, that is a REAL link to this entity — regardless of what the brand is called.
-- Search for the address, not only the name. A brand you have never heard of, sitting at this exact address, is far more likely to be them than a famous company with a similar name in another country.
-- Conversely: a candidate in a DIFFERENT COUNTRY cannot be this entity. This is a SINGAPORE registered entity at the Singapore address above. If the candidate is Australian, Indian, British — say so and mark LOW, no matter how similar the name is.
+SEARCH BY NAME, NOT BY ADDRESS.
+Search for the company name and its likely trading brand. Do NOT search for the address to find candidates — many Singapore companies are registered at a corporate secretary's office or a virtual office shared with dozens or hundreds of unrelated companies, so an address search returns other people's businesses.
+
+THE ADDRESS HAS EXACTLY TWO USES:
+1. RULING OUT — always valid. This is a SINGAPORE-registered entity. A candidate that is Australian, Indian, British or based anywhere else is NOT this entity, no matter how similar the name is. Say so and mark LOW.
+2. CORROBORATING — only when the address note above says the address is not shared. If it says shared/virtual office, the address is a MAILBOX. It tells you the entity is Singapore-registered and NOTHING about which website is theirs. Never treat a shared address as evidence of identity.
 
 But the reverse trap is worse: DO NOT claim two companies are the same just because they share a word. A shared word plus a DIFFERENT INDUSTRY or a DIFFERENT COUNTRY means they are almost certainly unrelated — say so, and mark it LOW.
 
