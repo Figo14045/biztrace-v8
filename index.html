@@ -3261,14 +3261,19 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   // Live-update panel row
   const er = document.getElementById(`er-${row.uen}`);
   if (er) {
-    er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${m.badgeClass}">${m.badge}</span>`;
-    const contact = result.email || result.phone || '';
+    // NOTE: use the merged badge/website computed above, not `result.*`.
+    // Gemini no longer returns email/phone (Patch B) and the authoritative
+    // website is whichever page fetch-contact actually reached (Patch C).
+    er.querySelector('.enrich-status').innerHTML =
+      `<span class="badge badge-${badgeClass}">${esc(badge)}</span>`;
+    const contactText = enrichData[row.uen].email || enrichData[row.uen].phone || '';
     let siteHtml = '';
-    if (result.website) {
-      siteHtml = websiteLinkHtml(result.website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px')
-        || `<span style="color:var(--accent2);font-size:10px">${esc(result.website)}</span>`;
+    if (website) {
+      siteHtml = websiteLinkHtml(website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px')
+        || `<span style="color:var(--accent2);font-size:10px">${esc(website)}</span>`;
     }
-    er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
+    er.querySelector('.enrich-contact').innerHTML =
+      (contactText ? `<span style="font-size:10px">${esc(contactText)}</span>` : '') + siteHtml || '—';
   }
 }
 
