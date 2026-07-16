@@ -12,6 +12,11 @@ const BLOCKED_DOMAINS = [
   'twitter.com', 'jobstreet.com', 'fastjobs.sg', 'mycareersfuture.gov.sg',
   'glassdoor.com', 'indeed.com', 'gradsingapore.com', 'sgpbusiness.com',
   'bizfile.acra.gov.sg', 'acra.gov.sg', 'yellowpages.com.sg',
+  // Registry copies: these restate the ACRA record we already hold, so any
+  // "match" found on them is circular. Observed in live runs: companies.sg
+  // and jctrans.net were both returned as if they were company websites.
+  'companies.sg', 'opencorporates.com', 'sgcompanyinfo.com', 'recordowl.com',
+  'jctrans.net', 'entitysearch.acra.gov.sg', 'companylist.sg', 'sgcompanies.co',
   'singpost.com', 'straitstimes.com', 'channelnewsasia.com',
   'businesstimes.com.sg', 'todayonline.com', 'mothership.sg',
   'hungrygowhere.com', 'tripadvisor.com', 'google.com',
@@ -152,9 +157,18 @@ function extractEmail(text) {
 }
 
 // Fetch page HTML with timeout
-async function fetchPage(url) {
+// Netlify's practical ceiling is ~10s for the whole invocation. fetchPage used
+// a fixed 8s timeout while the caller looped over 5 candidates — 40s worst
+// case. It survived because most pages answer fast, but Patch C adds a new
+// caller, so the budget is now explicit and enforced.
+const TOTAL_FETCH_BUDGET_MS = 7500;   // all fetching, leaves ~2.5s of headroom
+const PER_PAGE_TIMEOUT_MS   = 5000;   // no single page may eat the whole budget
+const MIN_TIME_TO_TRY_MS    = 1500;   // below this, stop rather than start a doomed fetch
+
+async function fetchPage(url, budgetMs) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const ms = Math.max(500, Math.min(PER_PAGE_TIMEOUT_MS, budgetMs || PER_PAGE_TIMEOUT_MS));
+  const timer = setTimeout(() => controller.abort(), ms);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
@@ -208,6 +222,9 @@ exports.handler = async function(event) {
       body: ''
     };
   }
+
+  const startedAt = Date.now();
+  const timeLeft = () => TOTAL_FETCH_BUDGET_MS - (Date.now() - startedAt);
 
   // Support both POST (preferred) and GET
   let uen, name, results;
@@ -333,8 +350,13 @@ exports.handler = async function(event) {
     }
 
     // ── Step 4: Fetch the page ────────────────────────────────────────────
+    // Stop rather than start a fetch we cannot finish inside the invocation.
+    if (timeLeft() < MIN_TIME_TO_TRY_MS) {
+      attemptLog.push({ url: getDomain(url), outcome: 'skipped_out_of_time' });
+      break;
+    }
     fetchesAttempted++;
-    const html = await fetchPage(url);
+    const html = await fetchPage(url, timeLeft());
     if (!html) {
       attemptLog.push({ url: getDomain(url), outcome: 'fetch_failed' });
       continue;
@@ -425,7 +447,9 @@ exports.handler = async function(event) {
         matched: matched.length,
         fetches_attempted: fetchesAttempted,
         fetches_ok: fetchesOk,
-        attempts: attemptLog
+        attempts: attemptLog,
+        elapsed_ms: Date.now() - startedAt,
+        out_of_time: timeLeft() < MIN_TIME_TO_TRY_MS
       }
     })
   };

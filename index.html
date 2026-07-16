@@ -2505,7 +2505,14 @@ function renderContactCell(uen, enr) {
   // freeform prose. Fall through to the raw string so AI reasoning is visible.
   const reasonText = REASON_TEXT[enr.reason] || enr.reason || '';
   const tip = reasonText ? ` title="${esc(reasonText)}"` : '';
-  const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${enr.badge}</span>`;
+  // Identity and contact are separate facts (spec §6). The badge reports the
+  // CONTACT outcome; the identity confidence rides beside it so Salwa can see
+  // how sure we are it is even the right company.
+  const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${esc(enr.badge)}</span>`;
+  const idConf = enr.identity_confidence && enr.identity_confidence !== 'NONE'
+    ? `<span style="font-size:9px;color:var(--text3);letter-spacing:0.04em;margin-left:4px"
+             title="${esc('Identity confidence: ' + enr.identity_confidence + ' — ' + (enr.identity_reason || ''))}">ID:${esc(enr.identity_confidence)}</span>`
+    : '';
   const phoneHtml = enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : '';
 
   // Email + a trust marker from the server-side validation. TRUSTED means the
@@ -2534,7 +2541,7 @@ function renderContactCell(uen, enr) {
   const candLink = showCandidates
     ? ` <a href="#" onclick="event.stopPropagation();showCandidates('${uen}');return false" style="color:var(--accent2);font-size:10px;text-decoration:underline;margin-left:4px">view ${enr.candidates.length} candidate${enr.candidates.length>1?'s':''}</a>`
     : '';
-  return badgeHtml + phoneHtml + emailHtml + candLink;
+  return badgeHtml + idConf + phoneHtml + emailHtml + candLink;
 }
 
 // Show a popover with the top candidate sites (Fix C)
@@ -2684,7 +2691,8 @@ function renderTable() {
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
       <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
       <td>${voCell}</td>
-      <td>${websiteLinkHtml(enr.website, 'color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px') || '—'}</td>
+      <td>${websiteLinkHtml(enr.website, 'color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px')
+            || (enr.badge ? `<span style="color:var(--text3);font-size:10px;font-style:italic">No website found</span>` : '—')}</td>
       <td>${renderContactCell(row.uen, enr)}</td>
     `;
     tbody.appendChild(tr);
@@ -2875,6 +2883,14 @@ function exportEnrichedCSV() {
       email:    e.email    || '',
       phone:    e.phone    || '',
       verified: e.badge    || '',
+      // Identity and contact are separate facts — do not collapse them.
+      identity_confidence: e.identity_confidence || '',
+      identity_reason:     e.identity_reason     || '',
+      contact_confidence:  e.contact_confidence  || '',
+      contact_reason:      e.contact_reason      || '',
+      // Provenance: the page the contact was actually read from. If this is
+      // blank, nothing was retrieved and the row is a lead, not a contact.
+      contact_source_url:  e.contact_source_url  || '',
       // Email trust signals so the team can filter before SmartReach upload.
       email_source:       e.email_source || 'none',
       email_verdict:      chk.verdict    || 'NONE',
@@ -3067,6 +3083,37 @@ async function startEnrich() {
 // Note on rate limiting: Gemini 2.5 Flash free tier allows ~10 requests per
 // minute. We pace AI calls at 6.5 seconds apart (see sleep() in startEnrich)
 // and additionally retry once on 429 with a short backoff.
+// ──────────────────────────────────────────────────────────────────────────
+// Deterministic contact retrieval
+// ──────────────────────────────────────────────────────────────────────────
+// Gemini decides WHICH SITE IS THEM (judgment). This decides WHAT IS ON IT
+// (fact). fetch-contact downloads the page and reads the email/phone out of
+// real HTML, so it cannot invent one — and it greps for the UEN, which is the
+// only thing in this system entitled to award VERIFIED.
+//
+// It also catches invented URLs: production-hasu.com and productionhasu.com
+// were returned for the same company on consecutive runs. At most one exists.
+// A URL that will not fetch was never real.
+async function retrieveContacts(row, candidates) {
+  const results = (candidates || [])
+    .map(c => ({ link: c.website, title: c.company_name || '', snippet: '' }))
+    .filter(r => r.link);
+  if (!results.length) return null;
+
+  try {
+    const r = await fetch('/.netlify/functions/fetch-contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uen: row.uen, name: row.entity_name, results })
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    console.warn('fetch-contact failed for', row.uen, e);
+    return null;   // never fail the whole enrichment because retrieval failed
+  }
+}
+
 async function enrichOneAI(row, apiKey, retryCount = 0) {
   const r = await fetch('/.netlify/functions/ai-enrich', {
     method: 'POST',
@@ -3096,9 +3143,15 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   const errStr = (json ? (String(json.error || '') + ' ' + String(json.detail || '')) : errBody);
 
   const isDailyQuota = /RESOURCE_EXHAUSTED|free_tier|per day|generate_content_free_tier_requests/i.test(errStr);
+  // "Empty response from Gemini" is finishReason:STOP with no content parts —
+  // the model ran the search, burned its tokens on thoughts and emitted no
+  // text. It completed cleanly, so it is not a 503, but it DOES clear on a
+  // retry. Observed on a different company each run (EIGHT HORIZONS, then
+  // FASTEPS + FIRSTCALL QA), costing ~1 company per run.
   const isTransient  = !isDailyQuota && (
     r.status === 503 ||
-    /\b503\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr)
+    /\b503\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr) ||
+    /empty response from gemini/i.test(errStr)
   );
 
   if (isDailyQuota) {
@@ -3119,33 +3172,89 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   if (!json.ok) throw new Error(json.error || 'AI enrichment failed');
 
   const result = json.result || {};
-  // Map confidence → existing badge style
-  const confidenceMap = {
-    'HIGH':   { badge: 'VERIFIED',   badgeClass: 'verify' },
+  const aiCandidates = Array.isArray(json.candidates) ? json.candidates : [];
+
+  // Identity is Gemini's judgment. It can never exceed MEDIUM — it reads
+  // snippets and cannot cite a source. See ai-enrich.js AI_MAX_CONFIDENCE.
+  const identityMap = {
     'MEDIUM': { badge: 'LIKELY',     badgeClass: 'likely' },
     'LOW':    { badge: 'UNVERIFIED', badgeClass: 'unver'  },
-    'NONE':   { badge: 'NO MATCH',   badgeClass: 'wrong'  },
+    'NONE':   { badge: 'NO WEBSITE', badgeClass: 'wrong'  },
+    'HIGH':   { badge: 'LIKELY',     badgeClass: 'likely' },  // defensive
   };
-  const m = confidenceMap[result.confidence] || confidenceMap['NONE'];
 
-  // Build a rich reason for the tooltip combining description + reasoning
+  // Hand the candidate sites to the deterministic extractor.
+  const contact = await retrieveContacts(row, aiCandidates);
+
+  const gotContact = !!(contact && (contact.email || contact.phone));
+  const pageFetched = !!(contact && contact.website);
+  // VERIFIED is earned ONLY here: fetch-contact grepped the retrieved HTML and
+  // found this company's UEN on it. No model can award this.
+  const uenOnPage = !!(contact && contact.badge === 'VERIFIED');
+
+  let badge, badgeClass, contactConfidence, contactReason;
+  if (uenOnPage && gotContact) {
+    badge = 'VERIFIED'; badgeClass = 'verify';
+    contactConfidence = 'HIGH';
+    contactReason = `UEN found on the retrieved page; contact read from ${contact.website}`;
+  } else if (gotContact) {
+    badge = 'FOUND'; badgeClass = 'likely';
+    contactConfidence = 'MEDIUM';
+    contactReason = `Contact read from ${contact.website}, but the UEN is not on the page — identity unconfirmed.`;
+  } else if (pageFetched) {
+    badge = 'NO CONTACT'; badgeClass = 'unver';
+    contactConfidence = 'LOW';
+    contactReason = `Reached ${contact.website} but found no published email or phone.`;
+  } else if (aiCandidates.length) {
+    // Retrieval failed or every candidate was blocked. Do NOT discard the
+    // finding — hand the candidate over for manual review (spec §9).
+    const im = identityMap[result.identity_confidence] || identityMap['NONE'];
+    badge = im.badge; badgeClass = im.badgeClass;
+    contactConfidence = 'NONE';
+    contactReason = contact
+      ? `Could not retrieve the page (${contact.reason || 'unknown'}). Candidate kept for review.`
+      : 'Page retrieval failed. Candidate kept for review.';
+  } else {
+    badge = 'NO WEBSITE'; badgeClass = 'wrong';
+    contactConfidence = 'NONE';
+    contactReason = 'No candidate website found.';
+  }
+
+  const website = (contact && contact.website) || result.website || null;
+
   const tipBits = [];
   if (result.description) tipBits.push(result.description);
-  if (result.reasoning) tipBits.push(`How verified: ${result.reasoning}`);
-  if (result.linkedin) tipBits.push(`LinkedIn: ${result.linkedin}`);
+  if (result.identity_confidence)
+    tipBits.push(`Identity: ${result.identity_confidence} — ${result.identity_reason || result.reasoning || ''}`);
+  tipBits.push(`Contact: ${contactConfidence} — ${contactReason}`);
+  if (aiCandidates.length > 1)
+    tipBits.push(`${aiCandidates.length} candidate sites found — review before use.`);
 
   enrichData[row.uen] = {
-    website: result.website || null,
-    email:   result.email   || null,
-    phone:   result.phone   || null,
-    badge: m.badge,
-    badgeClass: m.badgeClass,
+    website,
+    email:   (contact && contact.email) || null,
+    phone:   (contact && contact.phone) || null,
+    badge,
+    badgeClass,
     reason: tipBits.join('\n\n'),
-    candidates: [],  // AI mode doesn't surface candidate list
+    // Gemini's candidate identities, shaped for the existing candidate modal.
+    candidates: aiCandidates.map(c => ({
+      url: c.website, domain: c.website, title: c.company_name || c.website,
+      snippet: c.reasoning || '', strength: c.confidence === 'MEDIUM' ? 2 : 1, freq: 1
+    })),
     linkedin: result.linkedin || null,
     description: result.description || '',
-    email_source: result.email_source || 'none',
-    email_check: result.email_check || null,
+    identity_confidence: result.identity_confidence || 'NONE',
+    identity_reason: result.identity_reason || '',
+    contact_confidence: contactConfidence,
+    contact_reason: contactReason,
+    contact_source_url: (contact && contact.website) || null,
+    email_source: gotContact ? 'company_website' : 'none',
+    email_check: gotContact
+      ? { valid: true, domain_match: true, free_provider: false, verdict: 'TRUSTED',
+          note: `Read from ${contact.website}` }
+      : { valid: false, domain_match: false, free_provider: false, verdict: 'NONE',
+          note: contactReason },
     source: 'ai',
   };
 
