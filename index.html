@@ -2860,13 +2860,31 @@ async function exportCSV() {
     }
   }
 
-  const enrichedRows = allRows.map(r => ({
-    ...r,
-    website:  enrichData[r.uen]?.website  || '',
-    email:    enrichData[r.uen]?.email    || '',
-    phone:    enrichData[r.uen]?.phone    || '',
-    verified: enrichData[r.uen]?.badge    || '',
-  }));
+  // This is the button Salwa actually clicks, and it exports every matched row
+  // — so it must carry the same provenance as the panel export. Without it the
+  // CSV ships an email with no way to tell where it came from or whether we
+  // even confirmed the company, which defeats the point of retrieving it.
+  const enrichedRows = allRows.map(r => {
+    const e = enrichData[r.uen] || {};
+    const chk = e.email_check || {};
+    return {
+      ...r,
+      website:  e.website  || '',
+      email:    e.email    || '',
+      phone:    e.phone    || '',
+      verified: e.badge    || '',
+      identity_confidence: e.identity_confidence || '',
+      identity_reason:     e.identity_reason     || '',
+      contact_confidence:  e.contact_confidence  || '',
+      contact_reason:      e.contact_reason      || '',
+      email_source_url:    e.email_source_url    || '',
+      phone_source_url:    e.phone_source_url    || '',
+      identity_source_url: e.identity_source_url || '',
+      pages_checked:       (e.pages_checked || []).join(' | '),
+      email_verdict:       chk.verdict || '',
+      email_note:          chk.note    || '',
+    };
+  });
 
   downloadCSV(enrichedRows, 'biztrace_export.csv');
   showToast(`Exported ${allRows.length.toLocaleString()} rows`);
@@ -2888,9 +2906,13 @@ function exportEnrichedCSV() {
       identity_reason:     e.identity_reason     || '',
       contact_confidence:  e.contact_confidence  || '',
       contact_reason:      e.contact_reason      || '',
-      // Provenance: the page the contact was actually read from. If this is
+      // Provenance: the page each field was actually read from. If these are
       // blank, nothing was retrieved and the row is a lead, not a contact.
       contact_source_url:  e.contact_source_url  || '',
+      email_source_url:    e.email_source_url    || '',
+      phone_source_url:    e.phone_source_url    || '',
+      identity_source_url: e.identity_source_url || '',
+      pages_checked:       (e.pages_checked || []).join(' | '),
       // Email trust signals so the team can filter before SmartReach upload.
       email_source:       e.email_source || 'none',
       email_verdict:      chk.verdict    || 'NONE',
@@ -3276,10 +3298,21 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
     contact_confidence: contactConfidence,
     contact_reason: contactReason,
     contact_source_url: (contact && contact.website) || null,
+    // Patch D: provenance per field — the email and the phone can legitimately
+    // come from different pages (/contact vs the footer).
+    email_source_url:    (contact && contact.email_source_url)    || null,
+    phone_source_url:    (contact && contact.phone_source_url)    || null,
+    identity_source_url: (contact && contact.identity_source_url) || null,
+    pages_checked:       (contact && contact.pages_checked)       || [],
     email_source: gotContact ? 'company_website' : 'none',
     email_check: gotContact
-      ? { valid: true, domain_match: true, free_provider: false, verdict: 'TRUSTED',
-          note: `Read from ${contact.website}` }
+      ? { valid: true, domain_match: true, free_provider: false,
+          // TRUSTED requires a source page AND a confirmed identity. A real
+          // email off the wrong company's site is not trustworthy.
+          verdict: contactConfidence === 'LOW' ? 'REVIEW' : 'TRUSTED',
+          note: contact.email_source_url
+            ? `Read from ${contact.email_source_url}`
+            : `Read from ${contact.website}` }
       : { valid: false, domain_match: false, free_provider: false, verdict: 'NONE',
           note: contactReason },
     source: 'ai',

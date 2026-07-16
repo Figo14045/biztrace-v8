@@ -177,8 +177,9 @@ function extractEmail(text) {
 // case. It survived because most pages answer fast, but Patch C adds a new
 // caller, so the budget is now explicit and enforced.
 const TOTAL_FETCH_BUDGET_MS = 7500;   // all fetching, leaves ~2.5s of headroom
-const PER_PAGE_TIMEOUT_MS   = 5000;   // no single page may eat the whole budget
-const MIN_TIME_TO_TRY_MS    = 1500;   // below this, stop rather than start a doomed fetch
+const PER_PAGE_TIMEOUT_MS   = 3500;   // lowered: one slow page must not eat the crawl
+const MIN_TIME_TO_TRY_MS    = 1200;   // below this, stop rather than start a doomed fetch
+const MAX_INTERNAL_PAGES    = 2;      // landing page + up to 2 internal = 3 max
 
 async function fetchPage(url, budgetMs) {
   const controller = new AbortController();
@@ -228,6 +229,129 @@ function getBadge(html, uen, companyName) {
   if (matchCount === 1) return 'LIKELY';
 
   return 'UNVERIFIED';
+}
+
+// ── Internal page discovery ────────────────────────────────────────────────
+// SG SME emails are rarely on the homepage — they live on /contact or /about.
+// FIRSTCALL QA and PICTET both returned "page reached, no contact" for exactly
+// this reason. We follow a SMALL, same-site, contact-shaped set of links only.
+
+const SECOND_LEVEL = new Set(['com', 'net', 'org', 'edu', 'gov', 'co']);
+
+// acme.com.sg -> acme.com.sg ; mail.acme.com.sg -> acme.com.sg ; blog.x.com -> x.com
+function registrable(host) {
+  const p = String(host || '').toLowerCase().replace(/^www\./, '').split('.');
+  if (p.length <= 2) return p.join('.');
+  if (SECOND_LEVEL.has(p[p.length - 2])) return p.slice(-3).join('.');
+  return p.slice(-2).join('.');
+}
+
+const CONTACT_HINT_RE = /(contact|about|enquir|location|support|reach|get-in-touch|impressum)/i;
+const STRONG_HINT_RE  = /(contact|enquir|get-in-touch|reach)/i;
+
+function discoverInternalLinks(html, baseUrl) {
+  let base;
+  try { base = new URL(baseUrl); } catch (e) { return []; }
+  const found = new Map();
+  const re = /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]{0,150}?)<\/a>/gi;
+  let m, guard = 0;
+  while ((m = re.exec(html)) !== null && guard++ < 400) {
+    let abs;
+    try { abs = new URL(m[1], base); } catch (e) { continue; }
+    if (abs.protocol !== 'http:' && abs.protocol !== 'https:') continue;
+    if (registrable(abs.hostname) !== registrable(base.hostname)) continue;  // same site only
+    abs.hash = '';
+    if (abs.href === baseUrl) continue;
+    const hay = abs.pathname + ' ' + m[2].replace(/<[^>]*>/g, ' ');
+    if (!CONTACT_HINT_RE.test(hay)) continue;
+    const score = STRONG_HINT_RE.test(hay) ? 3 : /about/i.test(hay) ? 2 : 1;
+    if (!found.has(abs.href) || found.get(abs.href) < score) found.set(abs.href, score);
+  }
+  return [...found.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+}
+
+// ── Scored contact selection ───────────────────────────────────────────────
+// The old extractEmail returned the FIRST regex match that was not blocklisted.
+// That picks up analytics addresses, the web developer's inbox, and template
+// placeholders. It also blocked support@ outright, which for many SMEs is the
+// real inbox. Score instead, and take the best.
+
+const GENERIC_LOCALS = ['enquiries', 'enquiry', 'sales', 'info', 'contact', 'hello',
+                        'office', 'general', 'ask', 'admin', 'marketing', 'reception',
+                        'support', 'mail'];
+const BAD_LOCAL_RE = /^(noreply|no-reply|donotreply|do-not-reply|postmaster|mailer-daemon|abuse|webmaster|hostmaster|root|bounce|sentry|wordpress)/i;
+const BAD_EMAIL_RE = /(example\.(com|org|net)|yourdomain|your-domain|domain\.com|yourcompany|sentry\.io|wixpress\.com|godaddy|squarespace|shopify|wordpress\.com|w3\.org|schema\.org|\.png|\.jpg|\.jpeg|\.gif|\.webp|@2x|@3x)/i;
+const FREE_MAIL_DOMAINS = new Set(['gmail.com', 'yahoo.com', 'yahoo.com.sg', 'hotmail.com',
+                                   'outlook.com', 'live.com', 'icloud.com', 'qq.com', '163.com']);
+
+function selectEmail(html, pageUrl) {
+  const site = registrable(getDomain(pageUrl));
+  const seen = new Map();   // email -> fromMailto
+
+  // mailto: is the strongest signal — a human deliberately published it.
+  const mt = /mailto:([^"'?>\s&]+)/gi;
+  let m;
+  while ((m = mt.exec(html)) !== null) {
+    let e;
+    try { e = decodeURIComponent(m[1]); } catch (err) { e = m[1]; }
+    e = e.toLowerCase().trim();
+    if (e) seen.set(e, true);
+  }
+  for (const p of (html.match(EMAIL_PATTERN) || [])) {
+    const e = p.toLowerCase();
+    if (!seen.has(e)) seen.set(e, false);
+  }
+
+  let best = null;
+  for (const [email, fromMailto] of seen) {
+    if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) continue;
+    const at = email.lastIndexOf('@');
+    const local = email.slice(0, at);
+    const domain = email.slice(at + 1);
+    if (BAD_LOCAL_RE.test(local) || BAD_EMAIL_RE.test(email)) continue;
+
+    let score = 0;
+    if (fromMailto) score += 100;
+    if (registrable(domain) === site) score += 60;          // their own domain
+    else if (FREE_MAIL_DOMAINS.has(domain)) score += 5;      // an SME may really use gmail
+    else score -= 40;                                        // someone else's domain
+    const gi = GENERIC_LOCALS.indexOf(local);
+    if (gi >= 0) score += 35 - gi;                           // enquiries@ > sales@ > info@ > ...
+    else if (GENERIC_LOCALS.some(g => local.startsWith(g))) score += 10;
+    if (!best || score > best.score) best = { email, score, fromMailto };
+  }
+  return best && best.score > 0 ? best : null;
+}
+
+const PHONE_LABEL_RE = /(tel|phone|call|contact|office|hotline|mobile|sales|enquir|fax)/i;
+
+function selectPhone(html) {
+  // Real tel: LINKS first — deliberately published. Must be an href: a bare
+  // /tel:/ also matches the label "Tel:" in prose, and even "Hotel:".
+  const tl = /href\s*=\s*["']tel:([+0-9\s\-()]{7,20})["']/gi;
+  let m;
+  while ((m = tl.exec(html)) !== null) {
+    const phone = m[1].replace(/\s+/g, ' ').trim();
+    const d = phone.replace(/\D/g, '');
+    if ((d.length === 8 || d.length === 10 || d.length === 11) && !isPlaceholderPhone(phone)) {
+      return { phone, fromTel: true };
+    }
+  }
+  // then a number sitting next to a phone-ish label
+  for (const pattern of PHONE_PATTERNS) {
+    pattern.lastIndex = 0;
+    let mm;
+    while ((mm = pattern.exec(html)) !== null) {
+      const phone = mm[0].replace(/\s+/g, ' ').trim();
+      const d = phone.replace(/\D/g, '');
+      if (d.length !== 8 && d.length !== 10 && d.length !== 11) continue;
+      if (isPlaceholderPhone(phone)) continue;
+      const ctx = html.slice(Math.max(0, mm.index - 80), mm.index + 80);
+      if (PHONE_LABEL_RE.test(ctx)) return { phone, fromTel: false, labelled: true };
+    }
+  }
+  const p = extractPhone(html);   // last resort: any non-placeholder number
+  return p ? { phone: p, fromTel: false, labelled: false } : null;
 }
 
 // ── Main handler ───────────────────────────────────────────────────────────
@@ -373,39 +497,76 @@ exports.handler = async function(event) {
       };
     }
 
-    // ── Step 4: Fetch the page ────────────────────────────────────────────
-    // Stop rather than start a fetch we cannot finish inside the invocation.
+    // ── Step 4: Crawl the landing page, then a couple of internal pages ───
     if (timeLeft() < MIN_TIME_TO_TRY_MS) {
       attemptLog.push({ url: getDomain(url), outcome: 'skipped_out_of_time' });
       break;
     }
-    fetchesAttempted++;
-    const page = await fetchPage(url, timeLeft());
-    const html = page && page.html;
-    if (!html) {
-      const why = (page && page.error) || 'unknown';
-      if (why === 'dns_nxdomain') dnsFailures++;
-      attemptLog.push({ url: getDomain(url), outcome: 'fetch_failed', error: why });
-      continue;
+
+    const pagesChecked = [];
+    let bestEmail = null, emailUrl = null;
+    let bestPhone = null, phoneUrl = null;
+    let siteBadge = 'UNVERIFIED', identityUrl = null;
+    const queue = [url];
+    let internalAdded = 0;
+
+    while (queue.length && timeLeft() >= MIN_TIME_TO_TRY_MS &&
+           pagesChecked.length < 1 + MAX_INTERNAL_PAGES) {
+      const pageUrl = queue.shift();
+      fetchesAttempted++;
+      const page = await fetchPage(pageUrl, timeLeft());
+      const html = page && page.html;
+      if (!html) {
+        const why = (page && page.error) || 'unknown';
+        if (why === 'dns_nxdomain') dnsFailures++;
+        attemptLog.push({ url: pageUrl, outcome: 'fetch_failed', error: why });
+        continue;
+      }
+      fetchesOk++;
+      pagesChecked.push(pageUrl);
+
+      // Identity: the UEN on a retrieved page is the only thing that earns
+      // VERIFIED. Record WHICH page proved it.
+      const b = getBadge(html, uen, name);
+      if (b === 'VERIFIED' && siteBadge !== 'VERIFIED') { siteBadge = 'VERIFIED'; identityUrl = pageUrl; }
+      else if (siteBadge === 'UNVERIFIED' && b !== 'UNVERIFIED') { siteBadge = b; identityUrl = identityUrl || pageUrl; }
+
+      const e = selectEmail(html, pageUrl);
+      if (e && (!bestEmail || e.score > bestEmail.score)) { bestEmail = e; emailUrl = pageUrl; }
+      const p = selectPhone(html);
+      if (p && (!bestPhone || (p.fromTel && !bestPhone.fromTel))) { bestPhone = p; phoneUrl = pageUrl; }
+
+      // Queue contact-shaped links from the landing page only — never recurse.
+      if (pagesChecked.length === 1) {
+        for (const link of discoverInternalLinks(html, pageUrl)) {
+          if (internalAdded >= MAX_INTERNAL_PAGES) break;
+          queue.push(link); internalAdded++;
+        }
+      }
+
+      // Enough evidence: a mailto on their own domain plus a phone.
+      if (bestEmail && bestEmail.score >= 150 && bestPhone) break;
     }
-    fetchesOk++;
 
-    const phone = extractPhone(html);
-    const email = extractEmail(html);
+    if (!pagesChecked.length) continue;   // nothing retrievable for this candidate
 
-    if (phone || email) {
-      const badge = getBadge(html, uen, name);
-      attemptLog.push({ url: getDomain(url), outcome: 'page_hit', badge });
+    if (bestEmail || bestPhone) {
+      attemptLog.push({ url: getDomain(url), outcome: 'page_hit', badge: siteBadge, pages: pagesChecked.length });
       return {
         statusCode: 200,
         headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          badge,
+          badge: siteBadge,
           website: url,
-          phone,
-          email,
+          phone: bestPhone ? bestPhone.phone : null,
+          email: bestEmail ? bestEmail.email : null,
           source: 'page',
           reason: 'ok_page',
+          // Provenance, per field. A contact with no source URL is not a contact.
+          email_source_url: bestEmail ? emailUrl : null,
+          phone_source_url: bestPhone ? phoneUrl : null,
+          identity_source_url: identityUrl,
+          pages_checked: pagesChecked,
           candidates: topCandidates,
           debug: {
             serp_count: results.length,
@@ -413,26 +574,33 @@ exports.handler = async function(event) {
             matched: matched.length,
             fetches_attempted: fetchesAttempted,
             fetches_ok: fetchesOk,
-            attempts: attemptLog
+            dns_failures: dnsFailures,
+            attempts: attemptLog,
+            elapsed_ms: Date.now() - startedAt,
+            email_score: bestEmail ? bestEmail.score : null,
+            phone_from_tel: bestPhone ? !!bestPhone.fromTel : null
           }
         })
       };
     }
 
-    // Found the right site but no contact info — still report the website
+    // Reached the site but it publishes no contact anywhere we looked.
     if (domainMatchesCompany(url, name)) {
-      const badge = getBadge(html, uen, name);
-      attemptLog.push({ url: getDomain(url), outcome: 'page_no_contact', badge });
+      attemptLog.push({ url: getDomain(url), outcome: 'page_no_contact', badge: siteBadge, pages: pagesChecked.length });
       return {
         statusCode: 200,
         headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          badge,
+          badge: siteBadge,
           website: url,
-          phone:   null,
-          email:   null,
-          source:  'page',
-          reason:  'ok_no_contact',
+          phone: null,
+          email: null,
+          source: 'page',
+          reason: 'ok_no_contact',
+          email_source_url: null,
+          phone_source_url: null,
+          identity_source_url: identityUrl,
+          pages_checked: pagesChecked,
           candidates: topCandidates,
           debug: {
             serp_count: results.length,
@@ -440,7 +608,9 @@ exports.handler = async function(event) {
             matched: matched.length,
             fetches_attempted: fetchesAttempted,
             fetches_ok: fetchesOk,
-            attempts: attemptLog
+            dns_failures: dnsFailures,
+            attempts: attemptLog,
+            elapsed_ms: Date.now() - startedAt
           }
         })
       };
