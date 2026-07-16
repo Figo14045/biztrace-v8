@@ -382,9 +382,23 @@ const METHOD_MAX_CONFIDENCE = {
 };
 const CONF_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
 
-function capConfidence(confidence, method) {
-  const ceiling = METHOD_MAX_CONFIDENCE[method] || 'LOW';
+// Gemini's grounding is snippet-only: it reads Google's index, it never opens
+// the page. And it returns no source URLs (groundingMetadata carries only
+// searchEntryPoint + webSearchQueries — verified against a live response), so
+// any claim it makes about having seen a UEN on a site is UNVERIFIABLE.
+//
+// HIGH is therefore not something a model can award. It is earned when code
+// retrieves the page and finds the UEN or registered address in real HTML,
+// with a URL to point at — fetch-contact.js/getBadge() does exactly that.
+// Until then, nothing Gemini says exceeds MEDIUM.
+const AI_MAX_CONFIDENCE = 'MEDIUM';
+
+function capTo(confidence, ceiling) {
   return CONF_RANK[confidence] > CONF_RANK[ceiling] ? ceiling : confidence;
+}
+
+function capConfidence(confidence, method) {
+  return capTo(confidence, METHOD_MAX_CONFIDENCE[method] || 'LOW');
 }
 
 function normaliseCandidates(parsed) {
@@ -411,11 +425,20 @@ function normaliseCandidates(parsed) {
       confidence = 'LOW';
       method = 'directory_only';
     }
-    const capped = capConfidence(confidence, method);
-    if (capped !== confidence) {
+    // (a) method-appropriate ceiling — weak evidence cannot claim strong confidence
+    const methodCapped = capConfidence(confidence, method);
+    if (methodCapped !== confidence) {
       note = (note ? note + ' ' : '') +
-        `Downgraded ${confidence} to ${capped}: "${method}" is not a hard entity link.`;
-      confidence = capped;
+        `Downgraded ${confidence} to ${methodCapped}: "${method}" is not a hard entity link.`;
+      confidence = methodCapped;
+    }
+    // (b) AI ceiling — nothing unretrieved and uncitable is ever VERIFIED
+    const aiCapped = capTo(confidence, AI_MAX_CONFIDENCE);
+    if (aiCapped !== confidence) {
+      note = (note ? note + ' ' : '') +
+        `Capped at ${aiCapped}: identity claimed from search snippets with no ` +
+        `retrievable source. Pending page retrieval.`;
+      confidence = aiCapped;
     }
 
     out.push({
