@@ -44,6 +44,11 @@
 }
 .navcount.zero { background:var(--border2); color:var(--text3); }
 
+/* The UA rule [hidden]{display:none} is specificity (0,1,0); an #id rule is
+   (1,0,0) and beats it. Without this, display:flex kept the queue permanently
+   on screen, sitting on top of the home view. Home is the default; the queue
+   only ever appears when explicitly switched to. */
+#queueView[hidden], #layout[hidden] { display: none !important; }
 #queueView { padding:0; height:calc(100vh - 48px); display:flex; flex-direction:column; }
 #queue-bar {
   display:flex; align-items:center; gap:20px; padding:12px 22px;
@@ -3158,6 +3163,17 @@ async function startEnrich() {
     if (!key) { showToast('Enter your SerpAPI key first'); return; }
   }
 
+  // Seed the queue up front so the user can navigate away and watch progress
+  // there. Each row is replaced by its real result as enrichment completes.
+  for (const row of selRows) {
+    if (!enrichData[row.uen] || enrichData[row.uen].approval === 'none') {
+      enrichData[row.uen] = { approval: 'queued', badge: null };
+    }
+  }
+  updateQueueCount();
+  if (currentView === 'queue') renderQueue();
+  showToast(`✓ Successfully added ${selRows.length} ${selRows.length === 1 ? 'company' : 'companies'} to Suggestion Queue`);
+
   const btn = document.getElementById('start-enrich-btn');
   btn.disabled = true;
   btn.textContent = '⏳ Running…';
@@ -3203,6 +3219,7 @@ async function startEnrich() {
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
   // Covers every engine, not just Gemini.
   updateQueueCount();
+  if (currentView === 'queue') renderQueue();
   btn.disabled = false;
   btn.textContent = '▶ Start';
   renderTable();
@@ -3240,7 +3257,8 @@ function queueRows() {
 }
 
 function updateQueueCount() {
-  const pending = queueRows().filter(r => enrichData[r.uen].approval === 'pending').length;
+  const pending = queueRows().filter(r =>
+    ['pending', 'queued'].includes(enrichData[r.uen].approval)).length;
   const el = document.getElementById('nav-pending');
   if (!el) return;
   el.textContent = pending;
@@ -3290,12 +3308,25 @@ function renderQueue() {
     return;
   }
 
-  let pending = 0, approved = 0, rejected = 0;
+  let pending = 0, approved = 0, rejected = 0, waiting = 0;
   const cards = rows.map(row => {
     const e = enrichData[row.uen];
     if (e.approval === 'approved') approved++;
     else if (e.approval === 'rejected') rejected++;
     else if (e.approval === 'pending') pending++;
+    else if (e.approval === 'queued') waiting++;
+
+    // Still waiting its turn — show it, but there is nothing to decide yet.
+    if (e.approval === 'queued') {
+      return `
+        <div class="qcard nosuggest">
+          <div class="qcard-head">
+            <span class="qstatus pending">QUEUED</span>
+            <div class="qname">${esc(row.entity_name)}</div>
+            <div class="qmeta">${esc(row.uen)} &middot; waiting for enrichment&hellip;</div>
+          </div>
+        </div>`;
+    }
 
     const site = safeUrl(e.website);
     const hasSuggestion = !!(e.website || e.email || e.phone);
@@ -3340,7 +3371,7 @@ function renderQueue() {
   }).join('');
 
   list.innerHTML = cards;
-  document.getElementById('q-pending').textContent = pending;
+  document.getElementById('q-pending').textContent = pending + waiting;
   document.getElementById('q-approved').textContent = approved;
   document.getElementById('q-rejected').textContent = rejected;
 }
@@ -3600,6 +3631,7 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   };
 
   updateQueueCount();
+  if (currentView === 'queue') renderQueue();
 
   // Live-update panel row
   const er = document.getElementById(`er-${row.uen}`);
