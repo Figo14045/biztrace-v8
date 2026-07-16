@@ -125,18 +125,33 @@ function domainMatchesCompany(url, companyName) {
 }
 
 // Extract phone numbers from text
+// Matching Singapore's number FORMAT does not make a number real. Observed
+// live: trellisstrategies.org publishes "99999999", which is a placeholder,
+// and it was returned to the sales team as a phone number.
+function isPlaceholderPhone(phone) {
+  let d = String(phone).replace(/\D/g, '');
+  if (d.startsWith('65') && d.length === 10) d = d.slice(2);   // strip country code
+  if (d.length !== 8) return false;
+  if (/^(\d)\1{7}$/.test(d)) return true;            // 99999999, 88888888, 66666666
+  if (d === '12345678' || d === '87654321') return true;
+  if (d === '61234567' || d === '81234567' || d === '91234567') return true;
+  if (/^(\d\d)\1{3}$/.test(d)) return true;          // 12121212
+  return false;
+}
+
 function extractPhone(text) {
   for (const pattern of PHONE_PATTERNS) {
     pattern.lastIndex = 0;
     const matches = text.match(pattern);
-    if (matches && matches.length > 0) {
-      // Clean up and return first valid match
-      const phone = matches[0].replace(/\s+/g, ' ').trim();
-      // Sanity check: must be 8 digits (SG numbers)
+    if (!matches) continue;
+    // Walk every match, not just the first — the first may be a placeholder
+    // while a real number sits further down the page.
+    for (const raw of matches) {
+      const phone = raw.replace(/\s+/g, ' ').trim();
       const digits = phone.replace(/\D/g, '');
-      if (digits.length === 8 || digits.length === 10 || digits.length === 11) {
-        return phone;
-      }
+      if (digits.length !== 8 && digits.length !== 10 && digits.length !== 11) continue;
+      if (isPlaceholderPhone(phone)) continue;
+      return phone;
     }
   }
   return null;
@@ -180,12 +195,20 @@ async function fetchPage(url, budgetMs) {
       redirect: 'follow',
     });
     clearTimeout(timer);
-    if (!res.ok) return null;
+    if (!res.ok) return { html: null, error: 'http_' + res.status };
     const text = await res.text();
-    return text.slice(0, 200000); // limit to 200KB
-  } catch {
+    return { html: text.slice(0, 200000), error: null }; // limit to 200KB
+  } catch (e) {
     clearTimeout(timer);
-    return null;
+    // Distinguish "this domain does not exist" from "the site would not talk
+    // to us". Confirmed live: production-hasu.com returns NXDOMAIN — Gemini
+    // invented it. An invented domain is not a lead to review; it is nothing.
+    const code = (e && e.cause && e.cause.code) || (e && e.code) || '';
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'ERR_NAME_NOT_RESOLVED') {
+      return { html: null, error: 'dns_nxdomain' };
+    }
+    if (e && e.name === 'AbortError') return { html: null, error: 'timeout' };
+    return { html: null, error: 'network_' + (code || (e && e.name) || 'unknown') };
   }
 }
 
@@ -313,6 +336,7 @@ exports.handler = async function(event) {
 
   let fetchesAttempted = 0;
   let fetchesOk = 0;
+  let dnsFailures = 0;
   const attemptLog = [];
 
   for (const result of ordered) {
@@ -356,9 +380,12 @@ exports.handler = async function(event) {
       break;
     }
     fetchesAttempted++;
-    const html = await fetchPage(url, timeLeft());
+    const page = await fetchPage(url, timeLeft());
+    const html = page && page.html;
     if (!html) {
-      attemptLog.push({ url: getDomain(url), outcome: 'fetch_failed' });
+      const why = (page && page.error) || 'unknown';
+      if (why === 'dns_nxdomain') dnsFailures++;
+      attemptLog.push({ url: getDomain(url), outcome: 'fetch_failed', error: why });
       continue;
     }
     fetchesOk++;
@@ -426,6 +453,10 @@ exports.handler = async function(event) {
   // Nothing found — explain why
   let reason = 'no_match';
   if (fetchesAttempted === 0) reason = 'snippet_only_no_match';
+  // Every candidate domain failed DNS ⇒ the model made the URL up. That is a
+  // different fact from "the site blocked us", and deserves a different answer.
+  else if (fetchesOk === 0 && dnsFailures > 0 && dnsFailures === fetchesAttempted)
+    reason = 'domain_not_found';
   else if (fetchesOk === 0) reason = 'all_fetches_failed';
   else if (matched.length === 0) reason = 'no_domain_matched_company_name';
 
@@ -447,6 +478,7 @@ exports.handler = async function(event) {
         matched: matched.length,
         fetches_attempted: fetchesAttempted,
         fetches_ok: fetchesOk,
+        dns_failures: dnsFailures,
         attempts: attemptLog,
         elapsed_ms: Date.now() - startedAt,
         out_of_time: timeLeft() < MIN_TIME_TO_TRY_MS

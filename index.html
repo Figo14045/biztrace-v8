@@ -3191,19 +3191,45 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   // VERIFIED is earned ONLY here: fetch-contact grepped the retrieved HTML and
   // found this company's UEN on it. No model can award this.
   const uenOnPage = !!(contact && contact.badge === 'VERIFIED');
+  // The candidate domain does not resolve — the model invented it. Confirmed
+  // live: production-hasu.com returns DNS_PROBE_FINISHED_NXDOMAIN.
+  const inventedDomain = !!(contact && contact.reason === 'domain_not_found');
+
+  const RANK = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
+  const capTo = (c, ceiling) => (RANK[c] > RANK[ceiling] ? ceiling : c);
+
+  // Finding the UEN on the retrieved page PROVES identity — that outranks
+  // anything Gemini guessed from snippets. Otherwise identity is Gemini's.
+  const effectiveIdentity = uenOnPage ? 'HIGH' : (result.identity_confidence || 'NONE');
 
   let badge, badgeClass, contactConfidence, contactReason;
-  if (uenOnPage && gotContact) {
-    badge = 'VERIFIED'; badgeClass = 'verify';
-    contactConfidence = 'HIGH';
-    contactReason = `UEN found on the retrieved page; contact read from ${contact.website}`;
-  } else if (gotContact) {
-    badge = 'FOUND'; badgeClass = 'likely';
-    contactConfidence = 'MEDIUM';
-    contactReason = `Contact read from ${contact.website}, but the UEN is not on the page — identity unconfirmed.`;
+  if (gotContact) {
+    // A contact is only as trustworthy as the claim that this is the right
+    // company. BOATBAY returned a real address (hello@boatbaykerala.com) from
+    // an Indian site at identity LOW, and was badged FOUND/MEDIUM — a
+    // provenance-backed WRONG answer, which reads as more trustworthy, not
+    // less. Contact confidence can never exceed identity confidence.
+    const evidence = uenOnPage ? 'HIGH' : 'MEDIUM';
+    contactConfidence = capTo(evidence, effectiveIdentity);
+
+    if (contactConfidence === 'HIGH') {
+      badge = 'VERIFIED'; badgeClass = 'verify';
+      contactReason = `UEN found on the retrieved page; contact read from ${contact.website}`;
+    } else if (contactConfidence === 'MEDIUM') {
+      badge = 'FOUND'; badgeClass = 'likely';
+      contactReason = `Contact read from ${contact.website}. UEN not on the page — identity is ${effectiveIdentity}.`;
+    } else {
+      badge = 'CHECK ID'; badgeClass = 'unver';
+      contactReason = `Contact read from ${contact.website}, but identity is ${effectiveIdentity} — this may be a different company. Verify before contacting.`;
+    }
+  } else if (inventedDomain) {
+    // Not a lead. There is no page to review because there is no domain.
+    badge = 'NO WEBSITE'; badgeClass = 'wrong';
+    contactConfidence = 'NONE';
+    contactReason = 'The website returned does not exist (DNS lookup failed) — discarded as invented.';
   } else if (pageFetched) {
     badge = 'NO CONTACT'; badgeClass = 'unver';
-    contactConfidence = 'LOW';
+    contactConfidence = 'NONE';
     contactReason = `Reached ${contact.website} but found no published email or phone.`;
   } else if (aiCandidates.length) {
     // Retrieval failed or every candidate was blocked. Do NOT discard the
@@ -3220,7 +3246,8 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
     contactReason = 'No candidate website found.';
   }
 
-  const website = (contact && contact.website) || result.website || null;
+  // An invented domain is not a website. Do not show Salwa a dead link.
+  const website = inventedDomain ? null : ((contact && contact.website) || result.website || null);
 
   const tipBits = [];
   if (result.description) tipBits.push(result.description);
