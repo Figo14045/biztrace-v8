@@ -3291,7 +3291,7 @@ function qFieldHtml(label, value, conf, sourceUrl, why) {
       <div class="qval">
         ${val}
         ${why ? `<div class="qwhy">${esc(why)}</div>` : ''}
-        ${src ? `<div class="qsrc">read from <a href="${esc(src)}" target="_blank" rel="noopener noreferrer">${esc(src)}</a></div>` : ''}
+        ${(value && src) ? `<div class="qsrc">read from <a href="${esc(src)}" target="_blank" rel="noopener noreferrer">${esc(src)}</a></div>` : ''}
       </div>
       ${value ? confChip(conf) : ''}
     </div>`;

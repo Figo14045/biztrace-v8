@@ -295,6 +295,41 @@ const BAD_EMAIL_RE = /(example\.(com|org|net)|yourdomain|your-domain|domain\.com
 const FREE_MAIL_DOMAINS = new Set(['gmail.com', 'yahoo.com', 'yahoo.com.sg', 'hotmail.com',
                                    'outlook.com', 'live.com', 'icloud.com', 'qq.com', '163.com']);
 
+// Cloudflare's "Email Address Obfuscation" strips real addresses out of the
+// HTML and replaces them with the literal text "[email protected]", stashing the
+// real address hex-encoded in data-cfemail. A browser runs their JS to decode
+// it; we fetch raw HTML, so without this the email is simply invisible.
+// Confirmed live on zircon.tech, whose footer publishes contact@zircon.tech.
+// It is a XOR cipher: byte 0 is the key, every later byte is char ^ key.
+function cfDecodeEmail(hex) {
+  try {
+    if (!/^[0-9a-f]{4,}$/i.test(hex) || hex.length % 2) return null;
+    const key = parseInt(hex.slice(0, 2), 16);
+    let out = '';
+    for (let i = 2; i < hex.length; i += 2) {
+      out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key);
+    }
+    return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(out) ? out.toLowerCase() : null;
+  } catch (e) { return null; }
+}
+
+function extractCloudflareEmails(html) {
+  const out = [];
+  // data-cfemail="..." on the visible span, and the /cdn-cgi/l/email-protection#... href
+  const patterns = [
+    /data-cfemail\s*=\s*["']([0-9a-f]+)["']/gi,
+    /\/cdn-cgi\/l\/email-protection#([0-9a-f]+)/gi
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const e = cfDecodeEmail(m[1]);
+      if (e) out.push(e);
+    }
+  }
+  return out;
+}
+
 function selectEmail(html, pageUrl) {
   const site = registrable(getDomain(pageUrl));
   const seen = new Map();   // email -> fromMailto
@@ -307,6 +342,11 @@ function selectEmail(html, pageUrl) {
     try { e = decodeURIComponent(m[1]); } catch (err) { e = m[1]; }
     e = e.toLowerCase().trim();
     if (e) seen.set(e, true);
+  }
+  // Cloudflare-obfuscated addresses. Treat as mailto-strength: the site owner
+  // deliberately published them, Cloudflare merely hid them from scrapers.
+  for (const e of extractCloudflareEmails(html)) {
+    if (!seen.has(e)) seen.set(e, true);
   }
   for (const p of (html.match(EMAIL_PATTERN) || [])) {
     const e = p.toLowerCase();
