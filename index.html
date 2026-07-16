@@ -29,6 +29,89 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Suggestion Queue ─────────────────────────────────────────────────── */
+#viewnav { display:flex; gap:4px; margin-left:18px; }
+.navbtn {
+  background:none; border:1px solid transparent; color:var(--text3);
+  font-family:var(--mono); font-size:11px; letter-spacing:0.06em;
+  padding:5px 12px; border-radius:var(--radius); cursor:pointer;
+}
+.navbtn:hover { color:var(--text2); }
+.navbtn.active { color:var(--text); background:var(--surface2); border-color:var(--border); }
+.navcount {
+  background:var(--accent); color:#fff; font-size:9px; padding:1px 5px;
+  border-radius:8px; margin-left:5px;
+}
+.navcount.zero { background:var(--border2); color:var(--text3); }
+
+#queueView { padding:0; height:calc(100vh - 48px); display:flex; flex-direction:column; }
+#queue-bar {
+  display:flex; align-items:center; gap:20px; padding:12px 22px;
+  border-bottom:1px solid var(--border); background:var(--surface);
+}
+.qstat { font-family:var(--mono); font-size:10px; color:var(--text3); letter-spacing:0.08em; }
+.qnum { font-size:17px; color:var(--text); margin-right:6px; font-weight:600; }
+.qnum.ok { color:var(--green); } .qnum.no { color:var(--text3); }
+.qbtn {
+  background:var(--accent); color:#fff; border:none; border-radius:var(--radius);
+  padding:7px 14px; font-family:var(--mono); font-size:11px; cursor:pointer;
+}
+.qbtn.ghost { background:none; border:1px solid var(--border2); color:var(--text2); }
+.qbtn:hover { filter:brightness(1.12); }
+
+#queue-list { flex:1; overflow-y:auto; padding:18px 22px 60px; }
+.qcard {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:8px; margin-bottom:14px; overflow:hidden; max-width:900px;
+}
+.qcard.approved { border-color:rgba(34,197,94,0.45); }
+.qcard.rejected { opacity:0.5; }
+.qcard.nosuggest { opacity:0.6; }
+.qcard-head { padding:13px 16px; border-bottom:1px solid var(--border); }
+.qname { font-size:14px; font-weight:600; color:var(--text); }
+.qmeta { font-family:var(--mono); font-size:10px; color:var(--text3); margin-top:4px; line-height:1.7; }
+.qwarn { font-family:var(--mono); font-size:10px; color:var(--amber); margin-top:6px; }
+.qstatus {
+  float:right; font-family:var(--mono); font-size:9px; letter-spacing:0.08em;
+  padding:3px 9px; border-radius:10px; border:1px solid var(--border2); color:var(--text3);
+}
+.qstatus.approved { color:var(--green); border-color:rgba(34,197,94,0.5); }
+.qstatus.rejected { color:var(--red); border-color:rgba(239,68,68,0.4); }
+.qstatus.pending  { color:var(--amber); border-color:rgba(245,158,11,0.4); }
+
+.qfield { display:flex; gap:14px; padding:11px 16px; border-bottom:1px solid rgba(42,48,69,0.5); }
+.qlabel {
+  font-family:var(--mono); font-size:9px; color:var(--text3);
+  letter-spacing:0.1em; width:64px; flex-shrink:0; padding-top:2px;
+}
+.qval { flex:1; min-width:0; }
+.qval a { color:var(--accent2); text-decoration:none; font-size:12px; word-break:break-all; }
+.qval a:hover { text-decoration:underline; }
+.qplain { font-size:12px; color:var(--text); font-family:var(--mono); }
+.qnone  { font-size:12px; color:var(--text3); font-style:italic; }
+.qwhy { font-size:11px; color:var(--text2); margin-top:5px; line-height:1.6; }
+.qsrc { font-family:var(--mono); font-size:9px; color:var(--text3); margin-top:4px; }
+.qsrc a { font-size:9px; color:var(--text3); }
+.qconf {
+  font-family:var(--mono); font-size:9px; letter-spacing:0.08em;
+  padding:2px 7px; border-radius:3px; flex-shrink:0; align-self:flex-start;
+}
+.qconf.HIGH   { background:rgba(34,197,94,0.15);  color:var(--green); }
+.qconf.MEDIUM { background:rgba(245,158,11,0.15); color:var(--amber); }
+.qconf.LOW    { background:rgba(239,68,68,0.13);  color:var(--red); }
+.qconf.NONE   { background:var(--surface2); color:var(--text3); }
+.qactions { padding:11px 16px; display:flex; gap:9px; justify-content:flex-end; }
+.qact {
+  border:1px solid var(--border2); background:none; color:var(--text2);
+  font-family:var(--mono); font-size:11px; padding:6px 15px;
+  border-radius:var(--radius); cursor:pointer;
+}
+.qact.approve:hover { background:rgba(34,197,94,0.15); color:var(--green); border-color:var(--green); }
+.qact.reject:hover  { background:rgba(239,68,68,0.13); color:var(--red);  border-color:var(--red); }
+.qact.on-approve { background:rgba(34,197,94,0.2); color:var(--green); border-color:var(--green); }
+.qact.on-reject  { background:rgba(239,68,68,0.18); color:var(--red);  border-color:var(--red); }
+.qempty { color:var(--text3); font-family:var(--mono); font-size:12px; padding:50px; text-align:center; line-height:2; }
+
 body {
   font-family: var(--sans);
   background: var(--bg);
@@ -848,8 +931,27 @@ body.show-advanced .advanced-only { display: block; }
   <h1>BizTrace</h1>
   <span class="pill">V8</span>
   <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">ACRA Lead Intelligence</span>
+  <nav id="viewnav">
+    <button class="navbtn active" data-view="home" onclick="setView('home')">Home</button>
+    <button class="navbtn" data-view="queue" onclick="setView('queue')">
+      Suggestion Queue <span id="nav-pending" class="navcount">0</span>
+    </button>
+  </nav>
   <div class="spacer"></div>
   <div id="total-badge">DB: <span id="db-count">—</span> companies</div>
+</div>
+
+<!-- Suggestion Queue -->
+<div id="queueView" hidden>
+  <div id="queue-bar">
+    <div class="qstat"><span class="qnum" id="q-pending">0</span> Pending</div>
+    <div class="qstat"><span class="qnum ok" id="q-approved">0</span> Approved</div>
+    <div class="qstat"><span class="qnum no" id="q-rejected">0</span> Rejected</div>
+    <div class="spacer"></div>
+    <button class="qbtn ghost" onclick="setView('home')">&larr; Back to Home</button>
+    <button class="qbtn" onclick="exportApproved()">Export approved</button>
+  </div>
+  <div id="queue-list"></div>
 </div>
 
 <!-- Layout -->
@@ -3099,6 +3201,8 @@ async function startEnrich() {
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
+  // Covers every engine, not just Gemini.
+  updateQueueCount();
   btn.disabled = false;
   btn.textContent = '▶ Start';
   renderTable();
@@ -3111,6 +3215,158 @@ async function startEnrich() {
 // Note on rate limiting: Gemini 2.5 Flash free tier allows ~10 requests per
 // minute. We pace AI calls at 6.5 seconds apart (see sleep() in startEnrich)
 // and additionally retry once on 429 with a short backoff.
+// ──────────────────────────────────────────────────────────────────────────
+// Suggestion Queue
+// ──────────────────────────────────────────────────────────────────────────
+// Home is for finding companies. The queue is for deciding about them — a
+// different task needing different information, so it gets its own view.
+// Approval lives on enrichData[uen].approval, so where that is eventually
+// persisted (memory / localStorage / Turso) is a separate concern from this UI.
+
+let currentView = 'home';
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('layout').hidden = (v !== 'home');
+  document.getElementById('queueView').hidden = (v !== 'queue');
+  document.querySelectorAll('.navbtn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === v));
+  if (v === 'queue') renderQueue();
+}
+
+function queueRows() {
+  // Only companies we have actually enriched, in table order.
+  return (allResults || []).filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
+}
+
+function updateQueueCount() {
+  const pending = queueRows().filter(r => enrichData[r.uen].approval === 'pending').length;
+  const el = document.getElementById('nav-pending');
+  if (!el) return;
+  el.textContent = pending;
+  el.classList.toggle('zero', pending === 0);
+}
+
+function setApproval(uen, state) {
+  const e = enrichData[uen];
+  if (!e) return;
+  e.approval = (e.approval === state) ? 'pending' : state;   // click again to undo
+  renderQueue();
+  updateQueueCount();
+  if (typeof renderTable === 'function' && currentView === 'home') renderTable();
+}
+
+function confChip(level) {
+  const l = level || 'NONE';
+  return `<span class="qconf ${esc(l)}">${esc(l)}</span>`;
+}
+
+// Show a value with the page it was read from. No source URL = not a fact.
+function qFieldHtml(label, value, conf, sourceUrl, why) {
+  const src = safeUrl(sourceUrl);
+  const val = value
+    ? `<span class="qplain">${esc(value)}</span>`
+    : `<span class="qnone">not found</span>`;
+  return `
+    <div class="qfield">
+      <div class="qlabel">${esc(label)}</div>
+      <div class="qval">
+        ${val}
+        ${why ? `<div class="qwhy">${esc(why)}</div>` : ''}
+        ${src ? `<div class="qsrc">read from <a href="${esc(src)}" target="_blank" rel="noopener noreferrer">${esc(src)}</a></div>` : ''}
+      </div>
+      ${value ? confChip(conf) : ''}
+    </div>`;
+}
+
+function renderQueue() {
+  const list = document.getElementById('queue-list');
+  const rows = queueRows();
+  if (!rows.length) {
+    list.innerHTML = `<div class="qempty">Nothing to review yet.<br>Select companies on Home and run enrichment.</div>`;
+    document.getElementById('q-pending').textContent = '0';
+    document.getElementById('q-approved').textContent = '0';
+    document.getElementById('q-rejected').textContent = '0';
+    return;
+  }
+
+  let pending = 0, approved = 0, rejected = 0;
+  const cards = rows.map(row => {
+    const e = enrichData[row.uen];
+    if (e.approval === 'approved') approved++;
+    else if (e.approval === 'rejected') rejected++;
+    else if (e.approval === 'pending') pending++;
+
+    const site = safeUrl(e.website);
+    const hasSuggestion = !!(e.website || e.email || e.phone);
+    const dens = densityTier(row);
+    const addrWarn = dens.count >= 30
+      ? `<div class="qwarn">⚠ ${dens.count} companies share this unit — virtual office, address proves nothing</div>` : '';
+
+    const websiteRow = `
+      <div class="qfield">
+        <div class="qlabel">WEBSITE</div>
+        <div class="qval">
+          ${site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(site)}</a>`
+                 : `<span class="qnone">No website found</span>`}
+          ${e.identity_reason ? `<div class="qwhy">${esc(e.identity_reason)}</div>` : ''}
+        </div>
+        ${site ? confChip(e.identity_confidence) : ''}
+      </div>`;
+
+    return `
+      <div class="qcard ${e.approval}${hasSuggestion ? '' : ' nosuggest'}">
+        <div class="qcard-head">
+          <span class="qstatus ${e.approval}">${esc(e.approval.toUpperCase())}</span>
+          <div class="qname">${esc(row.entity_name)}</div>
+          <div class="qmeta">
+            ${esc(row.uen)} &middot; ${esc(row.entity_type_description || '')}
+            ${row.primary_ssic_code ? ' &middot; SSIC ' + esc(row.primary_ssic_code) : ''}<br>
+            ${esc(row.full_address || '')}
+          </div>
+          ${addrWarn}
+        </div>
+        ${websiteRow}
+        ${qFieldHtml('EMAIL', e.email, e.contact_confidence, e.email_source_url || e.contact_source_url, '')}
+        ${qFieldHtml('PHONE', e.phone, e.contact_confidence, e.phone_source_url || e.contact_source_url, '')}
+        ${hasSuggestion ? `
+        <div class="qactions">
+          <button class="qact reject ${e.approval === 'rejected' ? 'on-reject' : ''}"
+                  onclick="setApproval('${esc(row.uen)}','rejected')">✕ Reject</button>
+          <button class="qact approve ${e.approval === 'approved' ? 'on-approve' : ''}"
+                  onclick="setApproval('${esc(row.uen)}','approved')">✓ Approve</button>
+        </div>` : `<div class="qactions"><span class="qnone">Nothing to review</span></div>`}
+      </div>`;
+  }).join('');
+
+  list.innerHTML = cards;
+  document.getElementById('q-pending').textContent = pending;
+  document.getElementById('q-approved').textContent = approved;
+  document.getElementById('q-rejected').textContent = rejected;
+}
+
+function exportApproved() {
+  const rows = queueRows().filter(r => enrichData[r.uen].approval === 'approved');
+  if (!rows.length) { showToast('Nothing approved yet'); return; }
+  const out = rows.map(r => {
+    const e = enrichData[r.uen];
+    return {
+      uen: r.uen, entity_name: r.entity_name,
+      entity_type_description: r.entity_type_description || '',
+      primary_ssic_code: r.primary_ssic_code || '',
+      full_address: r.full_address || '',
+      website: e.website || '', email: e.email || '', phone: e.phone || '',
+      identity_confidence: e.identity_confidence || '',
+      contact_confidence: e.contact_confidence || '',
+      email_source_url: e.email_source_url || '',
+      phone_source_url: e.phone_source_url || '',
+      approved: 'yes'
+    };
+  });
+  downloadCSV(out, 'biztrace_approved.csv');
+  showToast(`Exported ${out.length} approved`);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Deterministic contact retrieval
 // ──────────────────────────────────────────────────────────────────────────
@@ -3334,7 +3590,16 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
       : { valid: false, domain_match: false, free_provider: false, verdict: 'NONE',
           note: contactReason },
     source: 'ai',
+    // Approval state. VERIFIED means fetch-contact found this company's UEN on
+    // the retrieved page — that is proof, not a guess, so it auto-approves.
+    // Anything weaker is Salwa's call. Rows with nothing found have nothing to
+    // decide, so they never enter the queue as work.
+    approval: badge === 'VERIFIED' ? 'approved'
+            : (website || (contact && (contact.email || contact.phone))) ? 'pending'
+            : 'none',
   };
+
+  updateQueueCount();
 
   // Live-update panel row
   const er = document.getElementById(`er-${row.uen}`);
@@ -3421,6 +3686,7 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
     email_source: result.email_source || 'none',
     email_check: result.email_check || null,
     source: 'claude',
+    approval: (result.website || result.email || result.phone) ? 'pending' : 'none',
   };
 
   const er = document.getElementById(`er-${row.uen}`);
@@ -3476,6 +3742,7 @@ async function enrichOneSerp(row, key) {
     reason:     contactData.reason || '',
     candidates: contactData.candidates || [],
     source: 'serp',
+    approval: (contactData.website || contactData.email || contactData.phone) ? 'pending' : 'none',
   };
 
   // Update panel row live
