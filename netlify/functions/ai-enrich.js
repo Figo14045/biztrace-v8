@@ -210,33 +210,7 @@ function extractGrounding(geminiResp) {
   const out = { queries: [], sources: [] };
   try {
     const gm = geminiResp?.candidates?.[0]?.groundingMetadata;
-    if (!gm) {
-      // TEMPORARY (Patch B.1): tell us where the metadata actually lives.
-      out.debug = {
-        found_groundingMetadata: false,
-        candidate_keys: Object.keys(geminiResp?.candidates?.[0] || {}),
-        response_keys: Object.keys(geminiResp || {})
-      };
-      return out;
-    }
-
-    // TEMPORARY (Patch B.1): webSearchQueries arrives but groundingChunks is
-    // empty, while the model's answer clearly contains facts read off a page.
-    // Dump the real shape once so we stop guessing. Remove after Patch C.
-    out.debug = {
-      found_groundingMetadata: true,
-      metadata_keys: Object.keys(gm),
-      chunk_count: Array.isArray(gm.groundingChunks) ? gm.groundingChunks.length : null,
-      support_count: Array.isArray(gm.groundingSupports) ? gm.groundingSupports.length : null,
-      first_chunk: (gm.groundingChunks || [])[0] || null,
-      first_support: (gm.groundingSupports || [])[0] || null,
-      has_searchEntryPoint: !!gm.searchEntryPoint,
-      retrieval_metadata: gm.retrievalMetadata || null,
-      // everything except searchEntryPoint, which is a large HTML blob
-      raw: JSON.stringify(Object.fromEntries(
-        Object.entries(gm).filter(([k]) => k !== 'searchEntryPoint')
-      )).slice(0, 4000)
-    };
+    if (!gm) return out;
 
     if (Array.isArray(gm.webSearchQueries)) {
       out.queries = gm.webSearchQueries.filter(q => typeof q === 'string').slice(0, 10);
@@ -391,6 +365,28 @@ function normaliseUrl(u) {
   } catch (e) { return null; }
 }
 
+// The prompt defines the confidence ladder, but a prompt is a request. Gemini
+// was observed returning HIGH alongside brand_and_activity_match while its own
+// reasoning said the site only "appears to be" official. HIGH is reserved for a
+// hard entity link (UEN or registered address on the company's own site); every
+// weaker method has a ceiling, enforced here regardless of what the model claims.
+const METHOD_MAX_CONFIDENCE = {
+  uen_on_own_site: 'HIGH',
+  address_match: 'HIGH',
+  former_name_match: 'MEDIUM',
+  brand_and_activity_match: 'MEDIUM',
+  name_only: 'LOW',
+  directory_only: 'LOW',
+  unverified: 'LOW',
+  uen_match: 'MEDIUM'   // legacy: cannot prove it was on their own site
+};
+const CONF_RANK = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
+
+function capConfidence(confidence, method) {
+  const ceiling = METHOD_MAX_CONFIDENCE[method] || 'LOW';
+  return CONF_RANK[confidence] > CONF_RANK[ceiling] ? ceiling : confidence;
+}
+
 function normaliseCandidates(parsed) {
   const raw = Array.isArray(parsed.candidates) ? parsed.candidates : [];
   const out = [];
@@ -415,12 +411,11 @@ function normaliseCandidates(parsed) {
       confidence = 'LOW';
       method = 'directory_only';
     }
-    if (method === 'uen_match' || method === 'directory_only') {
-      // Legacy 'uen_match' cannot be trusted to mean "on their own site".
-      if (confidence === 'HIGH' && method === 'uen_match') {
-        confidence = 'MEDIUM';
-        note = 'Downgraded: UEN match not confirmed as being on the company\'s own site.';
-      }
+    const capped = capConfidence(confidence, method);
+    if (capped !== confidence) {
+      note = (note ? note + ' ' : '') +
+        `Downgraded ${confidence} to ${capped}: "${method}" is not a hard entity link.`;
+      confidence = capped;
     }
 
     out.push({
@@ -433,8 +428,7 @@ function normaliseCandidates(parsed) {
     if (out.length >= 3) break;
   }
 
-  const rank = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
-  out.sort((a, b) => rank[b.confidence] - rank[a.confidence]);
+  out.sort((a, b) => CONF_RANK[b.confidence] - CONF_RANK[a.confidence]);
   return out;
 }
 
