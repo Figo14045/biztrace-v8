@@ -528,6 +528,10 @@ exports.handler = async function(event) {
         rows: result.rows,
         total: result.total,
         count: result.rows.length,
+        // Signals the frontend needs to resolve a count we deliberately did
+        // not run. Both must be forwarded or the frontend silently shows 0.
+        unfiltered_total: result.unfiltered_total,
+        enriched_total: result.enriched_total,
         sql: result.sql  // debug — remove in a later chunk
       })};
     } catch (e) {
