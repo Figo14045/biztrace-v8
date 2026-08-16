@@ -29,94 +29,6 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ── Suggestion Queue ─────────────────────────────────────────────────── */
-#viewnav { display:flex; gap:4px; margin-left:18px; }
-.navbtn {
-  background:none; border:1px solid transparent; color:var(--text3);
-  font-family:var(--mono); font-size:11px; letter-spacing:0.06em;
-  padding:5px 12px; border-radius:var(--radius); cursor:pointer;
-}
-.navbtn:hover { color:var(--text2); }
-.navbtn.active { color:var(--text); background:var(--surface2); border-color:var(--border); }
-.navcount {
-  background:var(--accent); color:#fff; font-size:9px; padding:1px 5px;
-  border-radius:8px; margin-left:5px;
-}
-.navcount.zero { background:var(--border2); color:var(--text3); }
-
-/* The UA rule [hidden]{display:none} is specificity (0,1,0); an #id rule is
-   (1,0,0) and beats it. Without this, display:flex kept the queue permanently
-   on screen, sitting on top of the home view. Home is the default; the queue
-   only ever appears when explicitly switched to. */
-#queueView[hidden], #layout[hidden] { display: none !important; }
-#queueView { padding:0; height:calc(100vh - 48px); display:flex; flex-direction:column; }
-#queue-bar {
-  display:flex; align-items:center; gap:20px; padding:12px 22px;
-  border-bottom:1px solid var(--border); background:var(--surface);
-}
-.qstat { font-family:var(--mono); font-size:10px; color:var(--text3); letter-spacing:0.08em; }
-.qnum { font-size:17px; color:var(--text); margin-right:6px; font-weight:600; }
-.qnum.ok { color:var(--green); } .qnum.no { color:var(--text3); }
-.qbtn {
-  background:var(--accent); color:#fff; border:none; border-radius:var(--radius);
-  padding:7px 14px; font-family:var(--mono); font-size:11px; cursor:pointer;
-}
-.qbtn.ghost { background:none; border:1px solid var(--border2); color:var(--text2); }
-.qbtn:hover { filter:brightness(1.12); }
-
-#queue-list { flex:1; overflow-y:auto; padding:18px 22px 60px; }
-.qcard {
-  background:var(--surface); border:1px solid var(--border);
-  border-radius:8px; margin-bottom:14px; overflow:hidden; max-width:900px;
-}
-.qcard.approved { border-color:rgba(34,197,94,0.45); }
-.qcard.rejected { opacity:0.5; }
-.qcard.nosuggest { opacity:0.6; }
-.qcard-head { padding:13px 16px; border-bottom:1px solid var(--border); }
-.qname { font-size:14px; font-weight:600; color:var(--text); }
-.qmeta { font-family:var(--mono); font-size:10px; color:var(--text3); margin-top:4px; line-height:1.7; }
-.qwarn { font-family:var(--mono); font-size:10px; color:var(--amber); margin-top:6px; }
-.qstatus {
-  float:right; font-family:var(--mono); font-size:9px; letter-spacing:0.08em;
-  padding:3px 9px; border-radius:10px; border:1px solid var(--border2); color:var(--text3);
-}
-.qstatus.approved { color:var(--green); border-color:rgba(34,197,94,0.5); }
-.qstatus.rejected { color:var(--red); border-color:rgba(239,68,68,0.4); }
-.qstatus.pending  { color:var(--amber); border-color:rgba(245,158,11,0.4); }
-
-.qfield { display:flex; gap:14px; padding:11px 16px; border-bottom:1px solid rgba(42,48,69,0.5); }
-.qlabel {
-  font-family:var(--mono); font-size:9px; color:var(--text3);
-  letter-spacing:0.1em; width:64px; flex-shrink:0; padding-top:2px;
-}
-.qval { flex:1; min-width:0; }
-.qval a { color:var(--accent2); text-decoration:none; font-size:12px; word-break:break-all; }
-.qval a:hover { text-decoration:underline; }
-.qplain { font-size:12px; color:var(--text); font-family:var(--mono); }
-.qnone  { font-size:12px; color:var(--text3); font-style:italic; }
-.qwhy { font-size:11px; color:var(--text2); margin-top:5px; line-height:1.6; }
-.qsrc { font-family:var(--mono); font-size:9px; color:var(--text3); margin-top:4px; }
-.qsrc a { font-size:9px; color:var(--text3); }
-.qconf {
-  font-family:var(--mono); font-size:9px; letter-spacing:0.08em;
-  padding:2px 7px; border-radius:3px; flex-shrink:0; align-self:flex-start;
-}
-.qconf.HIGH   { background:rgba(34,197,94,0.15);  color:var(--green); }
-.qconf.MEDIUM { background:rgba(245,158,11,0.15); color:var(--amber); }
-.qconf.LOW    { background:rgba(239,68,68,0.13);  color:var(--red); }
-.qconf.NONE   { background:var(--surface2); color:var(--text3); }
-.qactions { padding:11px 16px; display:flex; gap:9px; justify-content:flex-end; }
-.qact {
-  border:1px solid var(--border2); background:none; color:var(--text2);
-  font-family:var(--mono); font-size:11px; padding:6px 15px;
-  border-radius:var(--radius); cursor:pointer;
-}
-.qact.approve:hover { background:rgba(34,197,94,0.15); color:var(--green); border-color:var(--green); }
-.qact.reject:hover  { background:rgba(239,68,68,0.13); color:var(--red);  border-color:var(--red); }
-.qact.on-approve { background:rgba(34,197,94,0.2); color:var(--green); border-color:var(--green); }
-.qact.on-reject  { background:rgba(239,68,68,0.18); color:var(--red);  border-color:var(--red); }
-.qempty { color:var(--text3); font-family:var(--mono); font-size:12px; padding:50px; text-align:center; line-height:2; }
-
 body {
   font-family: var(--sans);
   background: var(--bg);
@@ -936,27 +848,8 @@ body.show-advanced .advanced-only { display: block; }
   <h1>BizTrace</h1>
   <span class="pill">V8</span>
   <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">ACRA Lead Intelligence</span>
-  <nav id="viewnav">
-    <button class="navbtn active" data-view="home" onclick="setView('home')">Home</button>
-    <button class="navbtn" data-view="queue" onclick="setView('queue')">
-      Suggestion Queue <span id="nav-pending" class="navcount">0</span>
-    </button>
-  </nav>
   <div class="spacer"></div>
   <div id="total-badge">DB: <span id="db-count">—</span> companies</div>
-</div>
-
-<!-- Suggestion Queue -->
-<div id="queueView" hidden>
-  <div id="queue-bar">
-    <div class="qstat"><span class="qnum" id="q-pending">0</span> Pending</div>
-    <div class="qstat"><span class="qnum ok" id="q-approved">0</span> Approved</div>
-    <div class="qstat"><span class="qnum no" id="q-rejected">0</span> Rejected</div>
-    <div class="spacer"></div>
-    <button class="qbtn ghost" onclick="setView('home')">&larr; Back to Home</button>
-    <button class="qbtn" onclick="exportApproved()">Export approved</button>
-  </div>
-  <div id="queue-list"></div>
 </div>
 
 <!-- Layout -->
@@ -1164,6 +1057,10 @@ body.show-advanced .advanced-only { display: block; }
           <input type="radio" name="enrich-mode" value="claude" id="mode-claude">
           <span>AI (Claude)</span>
         </label>
+        <label class="mode-radio">
+          <input type="radio" name="enrich-mode" value="openrouter" id="mode-openrouter">
+          <span>AI (OpenRouter)</span>
+        </label>
       </div>
 
       <div id="serp-section">
@@ -1184,6 +1081,14 @@ body.show-advanced .advanced-only { display: block; }
         <input class="filter-input" id="claude-key" type="password" placeholder="Paste your Anthropic API key (sk-ant-...)">
         <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.4">
           Get a key at <span style="color:var(--accent)">console.anthropic.com</span> (paid, ~$0.01/company)
+        </div>
+      </div>
+
+      <div id="openrouter-section" style="display:none">
+        <label>OpenRouter</label>
+        <div style="font-size:10px;color:var(--text3);line-height:1.5">
+          Uses the company OpenRouter account — no key needed.<br>
+          No daily limit. Billed per lookup (~$0.01/company).
         </div>
       </div>
     </div>
@@ -1284,13 +1189,7 @@ const DEFAULT_FIELDS = [
   'company_type_description','primary_ssic_code','primary_ssic_description',
   'postal_code','block','street_name','level_no','unit_no','building_name',
   'no_of_officers','annual_return_date','registration_incorporation_date',
-  'account_due_date','uen_of_audit_firm1','name_of_audit_firm1','has_auditor',
-  // full_address is COMPUTED by query.js (block + street + unit + building +
-  // postal). It is not a real Turso column, so SELECT * never returns it and
-  // it must be requested explicitly. It was missing, so every enrichment ran
-  // with "Registered address: (not provided)" — the address tier of the
-  // verification ladder could never fire.
-  'full_address'
+  'account_due_date','uen_of_audit_firm1','name_of_audit_firm1','has_auditor'
 ];
 
 // Convert a PostgREST-style params object (used everywhere in BizTrace today)
@@ -2614,18 +2513,9 @@ const REASON_TEXT = {
 
 function renderContactCell(uen, enr) {
   if (!enr || !enr.badge || enr.badge === 'ERROR') return '—';
-  // SerpAPI supplies reason CODES (keys of REASON_TEXT); Gemini/Claude supply
-  // freeform prose. Fall through to the raw string so AI reasoning is visible.
-  const reasonText = REASON_TEXT[enr.reason] || enr.reason || '';
+  const reasonText = REASON_TEXT[enr.reason] || '';
   const tip = reasonText ? ` title="${esc(reasonText)}"` : '';
-  // Identity and contact are separate facts (spec §6). The badge reports the
-  // CONTACT outcome; the identity confidence rides beside it so Salwa can see
-  // how sure we are it is even the right company.
-  const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${esc(enr.badge)}</span>`;
-  const idConf = enr.identity_confidence && enr.identity_confidence !== 'NONE'
-    ? `<span style="font-size:9px;color:var(--text3);letter-spacing:0.04em;margin-left:4px"
-             title="${esc('Identity confidence: ' + enr.identity_confidence + ' — ' + (enr.identity_reason || ''))}">ID:${esc(enr.identity_confidence)}</span>`
-    : '';
+  const badgeHtml = `<span class="badge badge-${enr.badgeClass}"${tip}>${enr.badge}</span>`;
   const phoneHtml = enr.phone ? ` <span style="color:var(--green);font-size:10px">${esc(enr.phone)}</span>` : '';
 
   // Email + a trust marker from the server-side validation. TRUSTED means the
@@ -2654,7 +2544,7 @@ function renderContactCell(uen, enr) {
   const candLink = showCandidates
     ? ` <a href="#" onclick="event.stopPropagation();showCandidates('${uen}');return false" style="color:var(--accent2);font-size:10px;text-decoration:underline;margin-left:4px">view ${enr.candidates.length} candidate${enr.candidates.length>1?'s':''}</a>`
     : '';
-  return badgeHtml + idConf + phoneHtml + emailHtml + candLink;
+  return badgeHtml + phoneHtml + emailHtml + candLink;
 }
 
 // Show a popover with the top candidate sites (Fix C)
@@ -2680,7 +2570,7 @@ function showCandidates(uen) {
     overflow-y: auto; padding: 20px; font-family: var(--mono); color: var(--text);
   `;
 
-  const reasonText = REASON_TEXT[enr.reason] || enr.reason || '';
+  const reasonText = REASON_TEXT[enr.reason] || '';
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
@@ -2703,7 +2593,7 @@ function showCandidates(uen) {
       <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
         <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
           <div style="flex:1;min-width:0">
-            ${safeUrl(c.url) ? `<a href="${esc(safeUrl(c.url))}" target="_blank" rel="noopener noreferrer" style="color:var(--accent2);text-decoration:none;font-size:12px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title || c.domain)}</a>` : `<span style="font-size:12px;font-weight:600">${esc(c.title || c.domain)}</span>`}
+            <a href="${esc(c.url)}" target="_blank" style="color:var(--accent2);text-decoration:none;font-size:12px;font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.title || c.domain)}</a>
             <div style="font-size:10px;color:var(--text3);margin-top:2px">${esc(c.domain)}</div>
             ${c.snippet ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;line-height:1.4">${esc(c.snippet)}</div>` : ''}
           </div>
@@ -2712,7 +2602,7 @@ function showCandidates(uen) {
           </div>
         </div>
         <div style="margin-top:8px;display:flex;gap:6px">
-          ${safeUrl(c.url) ? `<a href="${esc(safeUrl(c.url))}" target="_blank" rel="noopener noreferrer" style="background:var(--accent);color:white;padding:4px 10px;border-radius:4px;font-size:10px;text-decoration:none;letter-spacing:0.05em">Open ↗</a>` : ''}
+          <a href="${esc(c.url)}" target="_blank" style="background:var(--accent);color:white;padding:4px 10px;border-radius:4px;font-size:10px;text-decoration:none;letter-spacing:0.05em">Open ↗</a>
           <button onclick="acceptCandidate('${uen}', ${i})" style="background:var(--border2);color:var(--text);border:none;padding:4px 10px;border-radius:4px;font-size:10px;cursor:pointer;letter-spacing:0.05em">Use as website</button>
         </div>
       </div>
@@ -2804,8 +2694,7 @@ function renderTable() {
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
       <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
       <td>${voCell}</td>
-      <td>${websiteLinkHtml(enr.website, 'color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px')
-            || (enr.badge ? `<span style="color:var(--text3);font-size:10px;font-style:italic">No website found</span>` : '—')}</td>
+      <td>${enr.website ? `<a href="${enr.website}" target="_blank" style="color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px" title="${enr.website}">${enr.website.replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0]}</a>` : '—'}</td>
       <td>${renderContactCell(row.uen, enr)}</td>
     `;
     tbody.appendChild(tr);
@@ -2973,31 +2862,13 @@ async function exportCSV() {
     }
   }
 
-  // This is the button Salwa actually clicks, and it exports every matched row
-  // — so it must carry the same provenance as the panel export. Without it the
-  // CSV ships an email with no way to tell where it came from or whether we
-  // even confirmed the company, which defeats the point of retrieving it.
-  const enrichedRows = allRows.map(r => {
-    const e = enrichData[r.uen] || {};
-    const chk = e.email_check || {};
-    return {
-      ...r,
-      website:  e.website  || '',
-      email:    e.email    || '',
-      phone:    e.phone    || '',
-      verified: e.badge    || '',
-      identity_confidence: e.identity_confidence || '',
-      identity_reason:     e.identity_reason     || '',
-      contact_confidence:  e.contact_confidence  || '',
-      contact_reason:      e.contact_reason      || '',
-      email_source_url:    e.email_source_url    || '',
-      phone_source_url:    e.phone_source_url    || '',
-      identity_source_url: e.identity_source_url || '',
-      pages_checked:       (e.pages_checked || []).join(' | '),
-      email_verdict:       chk.verdict || '',
-      email_note:          chk.note    || '',
-    };
-  });
+  const enrichedRows = allRows.map(r => ({
+    ...r,
+    website:  enrichData[r.uen]?.website  || '',
+    email:    enrichData[r.uen]?.email    || '',
+    phone:    enrichData[r.uen]?.phone    || '',
+    verified: enrichData[r.uen]?.badge    || '',
+  }));
 
   downloadCSV(enrichedRows, 'biztrace_export.csv');
   showToast(`Exported ${allRows.length.toLocaleString()} rows`);
@@ -3014,18 +2885,6 @@ function exportEnrichedCSV() {
       email:    e.email    || '',
       phone:    e.phone    || '',
       verified: e.badge    || '',
-      // Identity and contact are separate facts — do not collapse them.
-      identity_confidence: e.identity_confidence || '',
-      identity_reason:     e.identity_reason     || '',
-      contact_confidence:  e.contact_confidence  || '',
-      contact_reason:      e.contact_reason      || '',
-      // Provenance: the page each field was actually read from. If these are
-      // blank, nothing was retrieved and the row is a lead, not a contact.
-      contact_source_url:  e.contact_source_url  || '',
-      email_source_url:    e.email_source_url    || '',
-      phone_source_url:    e.phone_source_url    || '',
-      identity_source_url: e.identity_source_url || '',
-      pages_checked:       (e.pages_checked || []).join(' | '),
       // Email trust signals so the team can filter before SmartReach upload.
       email_source:       e.email_source || 'none',
       email_verdict:      chk.verdict    || 'NONE',
@@ -3098,9 +2957,10 @@ function getEnrichMode() {
 function setEnrichMode(mode) {
   localStorage.setItem('enrich_mode', mode);
   const sections = {
-    serp:   document.getElementById('serp-section'),
-    ai:     document.getElementById('ai-section'),
-    claude: document.getElementById('claude-section'),
+    serp:       document.getElementById('serp-section'),
+    ai:         document.getElementById('ai-section'),
+    claude:     document.getElementById('claude-section'),
+    openrouter: document.getElementById('openrouter-section'),
   };
   // Show only the section matching the selected mode
   for (const [m, el] of Object.entries(sections)) {
@@ -3155,6 +3015,10 @@ async function startEnrich() {
   if (mode === 'ai') {
     key = getGeminiKey();
     if (!key) { showToast('Enter your Gemini API key first'); return; }
+  } else if (mode === 'openrouter') {
+    // No key needed — OpenRouter uses the company account, stored server-side
+    // in the OPENROUTER_API_KEY env var. Nothing to validate here.
+    key = null;
   } else if (mode === 'claude') {
     key = getClaudeKey();
     if (!key) { showToast('Enter your Claude API key first'); return; }
@@ -3162,17 +3026,6 @@ async function startEnrich() {
     key = getSerpKey();
     if (!key) { showToast('Enter your SerpAPI key first'); return; }
   }
-
-  // Seed the queue up front so the user can navigate away and watch progress
-  // there. Each row is replaced by its real result as enrichment completes.
-  for (const row of selRows) {
-    if (!enrichData[row.uen] || enrichData[row.uen].approval === 'none') {
-      enrichData[row.uen] = { approval: 'queued', badge: null };
-    }
-  }
-  updateQueueCount();
-  if (currentView === 'queue') renderQueue();
-  showToast(`✓ Successfully added ${selRows.length} ${selRows.length === 1 ? 'company' : 'companies'} to Suggestion Queue`);
 
   const btn = document.getElementById('start-enrich-btn');
   btn.disabled = true;
@@ -3188,6 +3041,8 @@ async function startEnrich() {
         await enrichOneAI(row, key);
       } else if (mode === 'claude') {
         await enrichOneClaude(row, key);
+      } else if (mode === 'openrouter') {
+        await enrichOneOpenRouter(row);
       } else {
         await enrichOneSerp(row, key);
       }
@@ -3213,13 +3068,10 @@ async function startEnrich() {
     // safely under the per-minute cap. (Note: the 20/day cap is separate and
     // cannot be avoided by slowing down.) Claude's paid tier has high limits,
     // so 1.2s is plenty. SerpAPI has no per-minute pressure.
-    await sleep(mode === 'ai' ? 4500 : (mode === 'claude' ? 1200 : 800));
+    await sleep(mode === 'ai' ? 4500 : ((mode === 'claude' || mode === 'openrouter') ? 1200 : 800));
   }
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
-  // Covers every engine, not just Gemini.
-  updateQueueCount();
-  if (currentView === 'queue') renderQueue();
   btn.disabled = false;
   btn.textContent = '▶ Start';
   renderTable();
@@ -3232,207 +3084,6 @@ async function startEnrich() {
 // Note on rate limiting: Gemini 2.5 Flash free tier allows ~10 requests per
 // minute. We pace AI calls at 6.5 seconds apart (see sleep() in startEnrich)
 // and additionally retry once on 429 with a short backoff.
-// ──────────────────────────────────────────────────────────────────────────
-// Suggestion Queue
-// ──────────────────────────────────────────────────────────────────────────
-// Home is for finding companies. The queue is for deciding about them — a
-// different task needing different information, so it gets its own view.
-// Approval lives on enrichData[uen].approval, so where that is eventually
-// persisted (memory / localStorage / Turso) is a separate concern from this UI.
-
-let currentView = 'home';
-
-function setView(v) {
-  currentView = v;
-  document.getElementById('layout').hidden = (v !== 'home');
-  document.getElementById('queueView').hidden = (v !== 'queue');
-  document.querySelectorAll('.navbtn').forEach(b =>
-    b.classList.toggle('active', b.dataset.view === v));
-  if (v === 'queue') renderQueue();
-}
-
-function queueRows() {
-  // Only companies we have actually enriched, in table order.
-  return (allResults || []).filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
-}
-
-function updateQueueCount() {
-  const pending = queueRows().filter(r =>
-    ['pending', 'queued'].includes(enrichData[r.uen].approval)).length;
-  const el = document.getElementById('nav-pending');
-  if (!el) return;
-  el.textContent = pending;
-  el.classList.toggle('zero', pending === 0);
-}
-
-function setApproval(uen, state) {
-  const e = enrichData[uen];
-  if (!e) return;
-  e.approval = (e.approval === state) ? 'pending' : state;   // click again to undo
-  renderQueue();
-  updateQueueCount();
-  if (typeof renderTable === 'function' && currentView === 'home') renderTable();
-}
-
-function confChip(level) {
-  const l = level || 'NONE';
-  return `<span class="qconf ${esc(l)}">${esc(l)}</span>`;
-}
-
-// Show a value with the page it was read from. No source URL = not a fact.
-function qFieldHtml(label, value, conf, sourceUrl, why) {
-  const src = safeUrl(sourceUrl);
-  const val = value
-    ? `<span class="qplain">${esc(value)}</span>`
-    : `<span class="qnone">not found</span>`;
-  return `
-    <div class="qfield">
-      <div class="qlabel">${esc(label)}</div>
-      <div class="qval">
-        ${val}
-        ${why ? `<div class="qwhy">${esc(why)}</div>` : ''}
-        ${src ? `<div class="qsrc">read from <a href="${esc(src)}" target="_blank" rel="noopener noreferrer">${esc(src)}</a></div>` : ''}
-      </div>
-      ${value ? confChip(conf) : ''}
-    </div>`;
-}
-
-function renderQueue() {
-  const list = document.getElementById('queue-list');
-  const rows = queueRows();
-  if (!rows.length) {
-    list.innerHTML = `<div class="qempty">Nothing to review yet.<br>Select companies on Home and run enrichment.</div>`;
-    document.getElementById('q-pending').textContent = '0';
-    document.getElementById('q-approved').textContent = '0';
-    document.getElementById('q-rejected').textContent = '0';
-    return;
-  }
-
-  let pending = 0, approved = 0, rejected = 0, waiting = 0;
-  const cards = rows.map(row => {
-    const e = enrichData[row.uen];
-    if (e.approval === 'approved') approved++;
-    else if (e.approval === 'rejected') rejected++;
-    else if (e.approval === 'pending') pending++;
-    else if (e.approval === 'queued') waiting++;
-
-    // Still waiting its turn — show it, but there is nothing to decide yet.
-    if (e.approval === 'queued') {
-      return `
-        <div class="qcard nosuggest">
-          <div class="qcard-head">
-            <span class="qstatus pending">QUEUED</span>
-            <div class="qname">${esc(row.entity_name)}</div>
-            <div class="qmeta">${esc(row.uen)} &middot; waiting for enrichment&hellip;</div>
-          </div>
-        </div>`;
-    }
-
-    const site = safeUrl(e.website);
-    const hasSuggestion = !!(e.website || e.email || e.phone);
-    const dens = densityTier(row);
-    const addrWarn = dens.count >= 30
-      ? `<div class="qwarn">⚠ ${dens.count} companies share this unit — virtual office, address proves nothing</div>` : '';
-
-    const websiteRow = `
-      <div class="qfield">
-        <div class="qlabel">WEBSITE</div>
-        <div class="qval">
-          ${site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(site)}</a>`
-                 : `<span class="qnone">No website found</span>`}
-          ${e.identity_reason ? `<div class="qwhy">${esc(e.identity_reason)}</div>` : ''}
-        </div>
-        ${site ? confChip(e.identity_confidence) : ''}
-      </div>`;
-
-    return `
-      <div class="qcard ${e.approval}${hasSuggestion ? '' : ' nosuggest'}">
-        <div class="qcard-head">
-          <span class="qstatus ${e.approval}">${esc(e.approval.toUpperCase())}</span>
-          <div class="qname">${esc(row.entity_name)}</div>
-          <div class="qmeta">
-            ${esc(row.uen)} &middot; ${esc(row.entity_type_description || '')}
-            ${row.primary_ssic_code ? ' &middot; SSIC ' + esc(row.primary_ssic_code) : ''}<br>
-            ${esc(row.full_address || '')}
-          </div>
-          ${addrWarn}
-        </div>
-        ${websiteRow}
-        ${qFieldHtml('EMAIL', e.email, e.contact_confidence, e.email_source_url || e.contact_source_url, '')}
-        ${qFieldHtml('PHONE', e.phone, e.contact_confidence, e.phone_source_url || e.contact_source_url, '')}
-        ${hasSuggestion ? `
-        <div class="qactions">
-          <button class="qact reject ${e.approval === 'rejected' ? 'on-reject' : ''}"
-                  onclick="setApproval('${esc(row.uen)}','rejected')">✕ Reject</button>
-          <button class="qact approve ${e.approval === 'approved' ? 'on-approve' : ''}"
-                  onclick="setApproval('${esc(row.uen)}','approved')">✓ Approve</button>
-        </div>` : `<div class="qactions"><span class="qnone">Nothing to review</span></div>`}
-      </div>`;
-  }).join('');
-
-  list.innerHTML = cards;
-  document.getElementById('q-pending').textContent = pending + waiting;
-  document.getElementById('q-approved').textContent = approved;
-  document.getElementById('q-rejected').textContent = rejected;
-}
-
-function exportApproved() {
-  const rows = queueRows().filter(r => enrichData[r.uen].approval === 'approved');
-  if (!rows.length) { showToast('Nothing approved yet'); return; }
-  const out = rows.map(r => {
-    const e = enrichData[r.uen];
-    return {
-      uen: r.uen, entity_name: r.entity_name,
-      entity_type_description: r.entity_type_description || '',
-      primary_ssic_code: r.primary_ssic_code || '',
-      full_address: r.full_address || '',
-      website: e.website || '', email: e.email || '', phone: e.phone || '',
-      identity_confidence: e.identity_confidence || '',
-      contact_confidence: e.contact_confidence || '',
-      email_source_url: e.email_source_url || '',
-      phone_source_url: e.phone_source_url || '',
-      approved: 'yes'
-    };
-  });
-  downloadCSV(out, 'biztrace_approved.csv');
-  showToast(`Exported ${out.length} approved`);
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Deterministic contact retrieval
-// ──────────────────────────────────────────────────────────────────────────
-// Gemini decides WHICH SITE IS THEM (judgment). This decides WHAT IS ON IT
-// (fact). fetch-contact downloads the page and reads the email/phone out of
-// real HTML, so it cannot invent one — and it greps for the UEN, which is the
-// only thing in this system entitled to award VERIFIED.
-//
-// It also catches invented URLs: production-hasu.com and productionhasu.com
-// were returned for the same company on consecutive runs. At most one exists.
-// A URL that will not fetch was never real.
-async function retrieveContacts(row, candidates) {
-  const results = (candidates || [])
-    .map(c => ({ link: c.website, title: c.company_name || '', snippet: '' }))
-    .filter(r => r.link);
-  if (!results.length) return null;
-
-  try {
-    const r = await fetch('/.netlify/functions/fetch-contact', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // NOTE: deliberately does NOT send postal_code. Grepping a candidate's
-      // page for the postal code proves it is in that BUILDING, not that it IS
-      // this company — and at a virtual office the address is shared by
-      // hundreds. Only the UEN can earn VERIFIED.
-      body: JSON.stringify({ uen: row.uen, name: row.entity_name, results })
-    });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) {
-    console.warn('fetch-contact failed for', row.uen, e);
-    return null;   // never fail the whole enrichment because retrieval failed
-  }
-}
-
 async function enrichOneAI(row, apiKey, retryCount = 0) {
   const r = await fetch('/.netlify/functions/ai-enrich', {
     method: 'POST',
@@ -3445,14 +3096,6 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
         entity_type_description: row.entity_type_description,
         entity_status_description: row.entity_status_description,
         full_address: row.full_address,
-        postal_code: row.postal_code,
-        building_name: row.building_name,
-        // How many companies share this exact unit. BizTrace exists to find
-        // companies at VIRTUAL offices, so the registered address is often a
-        // corporate secretary's mailbox shared by hundreds of unrelated
-        // entities — in which case it is not evidence of anything. Send the
-        // count so the model knows whether the address is worth using.
-        address_shared_count: densityTier(row).count || 0,
         primary_ssic_code: row.primary_ssic_code,
         primary_ssic_description: row.primary_ssic_description,
       }
@@ -3470,15 +3113,9 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   const errStr = (json ? (String(json.error || '') + ' ' + String(json.detail || '')) : errBody);
 
   const isDailyQuota = /RESOURCE_EXHAUSTED|free_tier|per day|generate_content_free_tier_requests/i.test(errStr);
-  // "Empty response from Gemini" is finishReason:STOP with no content parts —
-  // the model ran the search, burned its tokens on thoughts and emitted no
-  // text. It completed cleanly, so it is not a 503, but it DOES clear on a
-  // retry. Observed on a different company each run (EIGHT HORIZONS, then
-  // FASTEPS + FIRSTCALL QA), costing ~1 company per run.
   const isTransient  = !isDailyQuota && (
     r.status === 503 ||
-    /\b503\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr) ||
-    /empty response from gemini/i.test(errStr)
+    /\b503\b/.test(errStr) || /overload|unavailable|high demand/i.test(errStr)
   );
 
   if (isDailyQuota) {
@@ -3499,156 +3136,50 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
   if (!json.ok) throw new Error(json.error || 'AI enrichment failed');
 
   const result = json.result || {};
-  const aiCandidates = Array.isArray(json.candidates) ? json.candidates : [];
-
-  // Identity is Gemini's judgment. It can never exceed MEDIUM — it reads
-  // snippets and cannot cite a source. See ai-enrich.js AI_MAX_CONFIDENCE.
-  const identityMap = {
+  // Map confidence → existing badge style
+  const confidenceMap = {
+    'HIGH':   { badge: 'VERIFIED',   badgeClass: 'verify' },
     'MEDIUM': { badge: 'LIKELY',     badgeClass: 'likely' },
     'LOW':    { badge: 'UNVERIFIED', badgeClass: 'unver'  },
-    'NONE':   { badge: 'NO WEBSITE', badgeClass: 'wrong'  },
-    'HIGH':   { badge: 'LIKELY',     badgeClass: 'likely' },  // defensive
+    'NONE':   { badge: 'NO MATCH',   badgeClass: 'wrong'  },
   };
+  const m = confidenceMap[result.confidence] || confidenceMap['NONE'];
 
-  // Hand the candidate sites to the deterministic extractor.
-  const contact = await retrieveContacts(row, aiCandidates);
-
-  const gotContact = !!(contact && (contact.email || contact.phone));
-  const pageFetched = !!(contact && contact.website);
-  // VERIFIED is earned ONLY here: fetch-contact grepped the retrieved HTML and
-  // found this company's UEN on it. No model can award this.
-  const uenOnPage = !!(contact && contact.badge === 'VERIFIED');
-  // The candidate domain does not resolve — the model invented it. Confirmed
-  // live: production-hasu.com returns DNS_PROBE_FINISHED_NXDOMAIN.
-  const inventedDomain = !!(contact && contact.reason === 'domain_not_found');
-
-  const RANK = { HIGH: 3, MEDIUM: 2, LOW: 1, NONE: 0 };
-  const capTo = (c, ceiling) => (RANK[c] > RANK[ceiling] ? ceiling : c);
-
-  // Finding the UEN on the retrieved page PROVES identity — that outranks
-  // anything Gemini guessed from snippets. Otherwise identity is Gemini's.
-  const effectiveIdentity = uenOnPage ? 'HIGH' : (result.identity_confidence || 'NONE');
-
-  let badge, badgeClass, contactConfidence, contactReason;
-  if (gotContact) {
-    // A contact is only as trustworthy as the claim that this is the right
-    // company. BOATBAY returned a real address (hello@boatbaykerala.com) from
-    // an Indian site at identity LOW, and was badged FOUND/MEDIUM — a
-    // provenance-backed WRONG answer, which reads as more trustworthy, not
-    // less. Contact confidence can never exceed identity confidence.
-    const evidence = uenOnPage ? 'HIGH' : 'MEDIUM';
-    contactConfidence = capTo(evidence, effectiveIdentity);
-
-    if (contactConfidence === 'HIGH') {
-      badge = 'VERIFIED'; badgeClass = 'verify';
-      contactReason = `UEN found on the retrieved page; contact read from ${contact.website}`;
-    } else if (contactConfidence === 'MEDIUM') {
-      badge = 'FOUND'; badgeClass = 'likely';
-      contactReason = `Contact read from ${contact.website}. UEN not on the page — identity is ${effectiveIdentity}.`;
-    } else {
-      badge = 'CHECK ID'; badgeClass = 'unver';
-      contactReason = `Contact read from ${contact.website}, but identity is ${effectiveIdentity} — this may be a different company. Verify before contacting.`;
-    }
-  } else if (inventedDomain) {
-    // Not a lead. There is no page to review because there is no domain.
-    badge = 'NO WEBSITE'; badgeClass = 'wrong';
-    contactConfidence = 'NONE';
-    contactReason = 'The website returned does not exist (DNS lookup failed) — discarded as invented.';
-  } else if (pageFetched) {
-    badge = 'NO CONTACT'; badgeClass = 'unver';
-    contactConfidence = 'NONE';
-    contactReason = `Reached ${contact.website} but found no published email or phone.`;
-  } else if (aiCandidates.length) {
-    // Retrieval failed or every candidate was blocked. Do NOT discard the
-    // finding — hand the candidate over for manual review (spec §9).
-    const im = identityMap[result.identity_confidence] || identityMap['NONE'];
-    badge = im.badge; badgeClass = im.badgeClass;
-    contactConfidence = 'NONE';
-    contactReason = contact
-      ? `Could not retrieve the page (${contact.reason || 'unknown'}). Candidate kept for review.`
-      : 'Page retrieval failed. Candidate kept for review.';
-  } else {
-    badge = 'NO WEBSITE'; badgeClass = 'wrong';
-    contactConfidence = 'NONE';
-    contactReason = 'No candidate website found.';
-  }
-
-  // An invented domain is not a website. Do not show Salwa a dead link.
-  const website = inventedDomain ? null : ((contact && contact.website) || result.website || null);
-
+  // Build a rich reason for the tooltip combining description + reasoning
   const tipBits = [];
   if (result.description) tipBits.push(result.description);
-  if (result.identity_confidence)
-    tipBits.push(`Identity: ${result.identity_confidence} — ${result.identity_reason || result.reasoning || ''}`);
-  tipBits.push(`Contact: ${contactConfidence} — ${contactReason}`);
-  if (aiCandidates.length > 1)
-    tipBits.push(`${aiCandidates.length} candidate sites found — review before use.`);
+  if (result.reasoning) tipBits.push(`How verified: ${result.reasoning}`);
+  if (result.linkedin) tipBits.push(`LinkedIn: ${result.linkedin}`);
 
   enrichData[row.uen] = {
-    website,
-    email:   (contact && contact.email) || null,
-    phone:   (contact && contact.phone) || null,
-    badge,
-    badgeClass,
+    website: result.website || null,
+    email:   result.email   || null,
+    phone:   result.phone   || null,
+    badge: m.badge,
+    badgeClass: m.badgeClass,
     reason: tipBits.join('\n\n'),
-    // Gemini's candidate identities, shaped for the existing candidate modal.
-    candidates: aiCandidates.map(c => ({
-      url: c.website, domain: c.website, title: c.company_name || c.website,
-      snippet: c.reasoning || '', strength: c.confidence === 'MEDIUM' ? 2 : 1, freq: 1
-    })),
+    candidates: [],  // AI mode doesn't surface candidate list
     linkedin: result.linkedin || null,
     description: result.description || '',
-    identity_confidence: result.identity_confidence || 'NONE',
-    identity_reason: result.identity_reason || '',
-    contact_confidence: contactConfidence,
-    contact_reason: contactReason,
-    contact_source_url: (contact && contact.website) || null,
-    // Patch D: provenance per field — the email and the phone can legitimately
-    // come from different pages (/contact vs the footer).
-    email_source_url:    (contact && contact.email_source_url)    || null,
-    phone_source_url:    (contact && contact.phone_source_url)    || null,
-    identity_source_url: (contact && contact.identity_source_url) || null,
-    pages_checked:       (contact && contact.pages_checked)       || [],
-    email_source: gotContact ? 'company_website' : 'none',
-    email_check: gotContact
-      ? { valid: true, domain_match: true, free_provider: false,
-          // TRUSTED requires a source page AND a confirmed identity. A real
-          // email off the wrong company's site is not trustworthy.
-          verdict: contactConfidence === 'LOW' ? 'REVIEW' : 'TRUSTED',
-          note: contact.email_source_url
-            ? `Read from ${contact.email_source_url}`
-            : `Read from ${contact.website}` }
-      : { valid: false, domain_match: false, free_provider: false, verdict: 'NONE',
-          note: contactReason },
+    email_source: result.email_source || 'none',
+    email_check: result.email_check || null,
     source: 'ai',
-    // Approval state. VERIFIED means fetch-contact found this company's UEN on
-    // the retrieved page — that is proof, not a guess, so it auto-approves.
-    // Anything weaker is Salwa's call. Rows with nothing found have nothing to
-    // decide, so they never enter the queue as work.
-    approval: badge === 'VERIFIED' ? 'approved'
-            : (website || (contact && (contact.email || contact.phone))) ? 'pending'
-            : 'none',
   };
-
-  updateQueueCount();
-  if (currentView === 'queue') renderQueue();
 
   // Live-update panel row
   const er = document.getElementById(`er-${row.uen}`);
   if (er) {
-    // NOTE: use the merged badge/website computed above, not `result.*`.
-    // Gemini no longer returns email/phone (Patch B) and the authoritative
-    // website is whichever page fetch-contact actually reached (Patch C).
-    er.querySelector('.enrich-status').innerHTML =
-      `<span class="badge badge-${badgeClass}">${esc(badge)}</span>`;
-    const contactText = enrichData[row.uen].email || enrichData[row.uen].phone || '';
+    er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${m.badgeClass}">${m.badge}</span>`;
+    const contact = result.email || result.phone || '';
     let siteHtml = '';
-    if (website) {
-      siteHtml = websiteLinkHtml(website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px')
-        || `<span style="color:var(--accent2);font-size:10px">${esc(website)}</span>`;
+    if (result.website) {
+      try {
+        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
+      } catch (e) {
+        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
+      }
     }
-    er.querySelector('.enrich-contact').innerHTML =
-      (contactText ? `<span style="font-size:10px">${esc(contactText)}</span>` : '') + siteHtml || '—';
+    er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
   }
 }
 
@@ -3667,9 +3198,6 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
         entity_type_description: row.entity_type_description,
         entity_status_description: row.entity_status_description,
         full_address: row.full_address,
-        postal_code: row.postal_code,
-        building_name: row.building_name,
-        address_shared_count: densityTier(row).count || 0,
         primary_ssic_code: row.primary_ssic_code,
         primary_ssic_description: row.primary_ssic_description,
       }
@@ -3718,7 +3246,6 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
     email_source: result.email_source || 'none',
     email_check: result.email_check || null,
     source: 'claude',
-    approval: (result.website || result.email || result.phone) ? 'pending' : 'none',
   };
 
   const er = document.getElementById(`er-${row.uen}`);
@@ -3727,8 +3254,96 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
     const contact = result.email || result.phone || '';
     let siteHtml = '';
     if (result.website) {
-      siteHtml = websiteLinkHtml(result.website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px')
-        || `<span style="color:var(--accent2);font-size:10px">${esc(result.website)}</span>`;
+      try {
+        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
+      } catch (e) {
+        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
+      }
+    }
+    er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
+  }
+}
+
+// ── OpenRouter enrichment ─────────────────────────────────────
+// Same shape as enrichOneClaude, with two differences:
+//  1. No API key is sent — OpenRouter uses the company account, and the key
+//     lives server-side in the OPENROUTER_API_KEY env var.
+//  2. The response includes model_used, since OpenRouter may fall back to a
+//     different model than requested. We keep it for debugging quality.
+async function enrichOneOpenRouter(row, retryCount = 0) {
+  const r = await fetch('/.netlify/functions/openrouter-enrich', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company: {
+        entity_name: row.entity_name,
+        uen: row.uen,
+        entity_type_description: row.entity_type_description,
+        entity_status_description: row.entity_status_description,
+        full_address: row.full_address,
+        primary_ssic_code: row.primary_ssic_code,
+        primary_ssic_description: row.primary_ssic_description,
+      }
+    })
+  });
+
+  const errBody = await r.text();
+  let json = null;
+  try { json = JSON.parse(errBody); } catch (e) {}
+  const errStr = json ? (String(json.error || '') + ' ' + String(json.detail || '')) : errBody;
+
+  // Retry once on transient upstream overload. OpenRouter has no daily cap,
+  // so a 429/503 here means a provider hiccup, not exhausted quota.
+  if (retryCount < 1 && (/\b(429|503|overloaded)\b/i.test(errStr) || r.status === 429 || r.status === 503)) {
+    console.warn(`Transient OpenRouter error on ${row.uen}, retrying in 5s…`);
+    await sleep(5000);
+    return enrichOneOpenRouter(row, retryCount + 1);
+  }
+
+  if (!json) throw new Error(`openrouter-enrich returned ${r.status}`);
+  if (!json.ok) throw new Error(json.error || 'OpenRouter enrichment failed');
+
+  const result = json.result || {};
+  const confidenceMap = {
+    'HIGH':   { badge: 'VERIFIED',   badgeClass: 'verify' },
+    'MEDIUM': { badge: 'LIKELY',     badgeClass: 'likely' },
+    'LOW':    { badge: 'UNVERIFIED', badgeClass: 'unver'  },
+    'NONE':   { badge: 'NO MATCH',   badgeClass: 'wrong'  },
+  };
+  const m = confidenceMap[result.confidence] || confidenceMap['NONE'];
+
+  const tipBits = [];
+  if (result.description) tipBits.push(result.description);
+  if (result.reasoning) tipBits.push(`How verified: ${result.reasoning}`);
+  if (result.linkedin) tipBits.push(`LinkedIn: ${result.linkedin}`);
+
+  enrichData[row.uen] = {
+    website: result.website || null,
+    email:   result.email   || null,
+    phone:   result.phone   || null,
+    badge: m.badge,
+    badgeClass: m.badgeClass,
+    reason: tipBits.join('\n\n'),
+    candidates: [],
+    linkedin: result.linkedin || null,
+    description: result.description || '',
+    email_source: result.email_source || 'none',
+    email_check: result.email_check || null,
+    source: 'openrouter',
+    model_used: json.model_used || null,
+  };
+
+  const er = document.getElementById(`er-${row.uen}`);
+  if (er) {
+    er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${m.badgeClass}">${m.badge}</span>`;
+    const contact = result.email || result.phone || '';
+    let siteHtml = '';
+    if (result.website) {
+      try {
+        siteHtml = `<a href="${result.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(result.website).hostname}</a>`;
+      } catch (e) {
+        siteHtml = `<span style="color:var(--accent2);font-size:10px">${result.website}</span>`;
+      }
     }
     er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + siteHtml || '—';
   }
@@ -3774,7 +3389,6 @@ async function enrichOneSerp(row, key) {
     reason:     contactData.reason || '',
     candidates: contactData.candidates || [],
     source: 'serp',
-    approval: (contactData.website || contactData.email || contactData.phone) ? 'pending' : 'none',
   };
 
   // Update panel row live
@@ -3782,7 +3396,7 @@ async function enrichOneSerp(row, key) {
   if (er) {
     er.querySelector('.enrich-status').innerHTML = `<span class="badge badge-${badgeClass}">${badge}</span>`;
     const contact = contactData.email || contactData.phone || '';
-    const site = websiteLinkHtml(contactData.website, 'color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px');
+    const site = contactData.website ? `<a href="${contactData.website}" target="_blank" style="color:var(--accent2);font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">${new URL(contactData.website).hostname}</a>` : '';
     er.querySelector('.enrich-contact').innerHTML = (contact ? `<span style="font-size:10px">${contact}</span>` : '') + site || '—';
   }
 }
@@ -3859,36 +3473,7 @@ function showToast(msg) {
 // UTILS
 // ══════════════════════════════════════════════════════════════
 function v(id) { return document.getElementById(id)?.value || ''; }
-function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-
-// Treat every model-returned / search-derived URL as untrusted. Returns a
-// normalised http(s) URL, or null for anything else (javascript:, data:,
-// malformed). Callers must handle null rather than falling back to raw output.
-function safeUrl(u) {
-  if (!u) return null;
-  let s = String(u).trim();
-  // Models frequently return a bare host ("acme.com.sg") despite being asked
-  // for a full URL. new URL() throws on that, which would silently hide a
-  // perfectly good site. Assume https:// ONLY when there is no scheme at all —
-  // never rewrite an existing one, so javascript:/data: stay blocked below.
-  if (!/^[a-z][a-z0-9+.\-]*:/i.test(s)) s = 'https://' + s;
-  try {
-    const p = new URL(s);
-    return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null;
-  } catch (e) { return null; }
-}
-
-function hostOf(u) {
-  try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return String(u ?? ''); }
-}
-
-// Single safe renderer for the website links. Returns '' when the URL is not
-// usable, so callers can supply their own placeholder.
-function websiteLinkHtml(url, style) {
-  const u = safeUrl(url);
-  if (!u) return '';
-  return `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="${style}" title="${esc(u)}">${esc(hostOf(u))}</a>`;
-}
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function truncate(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : (s||''); }
 function today() { return new Date().toISOString().split('T')[0]; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
