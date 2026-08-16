@@ -41,6 +41,37 @@ const ALLOWED_COLUMNS = new Set([
   'has_auditor', 'full_address',
 ]);
 
+// ──────────────────────────────────────────────────────────────────────────
+// Enrichment join
+// ──────────────────────────────────────────────────────────────────────────
+// Enrichment results live in a separate `enrichments` table so the 2M-row
+// authoritative ACRA data is never mixed with derived, uncertain data (and so
+// a monthly ACRA refresh can't wipe it).
+//
+// `uen` is the ONLY column name shared by both tables, so it is the only one
+// needing qualification when we join. Everything else — including the computed
+// SELECT expressions — stays unambiguous.
+const COMPANIES_ALIAS = 'c';
+const ENRICH_ALIAS = 'e';
+
+const ENRICHMENT_FIELDS = [
+  'website', 'email', 'phone', 'linkedin', 'description',
+  'identity_confidence', 'contact_confidence',
+  'email_source_url', 'phone_source_url',
+  'email_source', 'email_verdict', 'email_domain_match',
+  'engine', 'model_used', 'outcome',
+  'approval', 'approved_at',
+  'enriched_at', 'first_enriched_at', 'enrichment_count',
+];
+
+// Prefix each enrichment column so it can't collide with a company column and
+// so the frontend can tell where a value came from.
+function buildEnrichmentSelect() {
+  return ENRICHMENT_FIELDS
+    .map(f => `${ENRICH_ALIAS}."${f}" AS enr_${f}`)
+    .join(', ');
+}
+
 // SELECT expression for each "virtual" column we need to compute.
 // For real columns, we just use the column name directly. For derived ones,
 // we emit a computed expression with an alias.
@@ -52,17 +83,20 @@ const SELECT_EXPR = {
 // Quote a column name safely. Since we've allowlisted via ALLOWED_COLUMNS
 // already, all columns are known-safe snake_case identifiers — but we still
 // wrap in double-quotes for clarity and to handle any future reserved words.
-function quoteCol(col) {
+function quoteCol(col, qualify) {
+  // Only `uen` exists in both companies and enrichments, so it is the only
+  // column that must be table-qualified when the enrichment join is active.
+  if (qualify && col === 'uen') return `${COMPANIES_ALIAS}."${col}"`;
   return `"${col}"`;
 }
 
 // Build the SELECT clause. If the request specifies fields, emit just those
 // (mixing real columns and computed expressions). Otherwise SELECT *.
-function buildSelect(fields) {
-  if (!fields || !fields.length) return '*';
+function buildSelect(fields, qualify) {
+  if (!fields || !fields.length) return qualify ? `${COMPANIES_ALIAS}.*` : '*';
   const parts = fields.map(f => {
     if (!ALLOWED_COLUMNS.has(f)) throw new Error(`Unknown column: ${f}`);
-    return SELECT_EXPR[f] || quoteCol(f);
+    return SELECT_EXPR[f] || quoteCol(f, qualify);
   });
   return parts.join(', ');
 }
@@ -77,7 +111,7 @@ function buildSelect(fields) {
 //   in                           — values : array
 //   is_null, is_not_null         — no value
 //   contains_word                — value : matched as whole word (basic)
-function buildWhere(filters) {
+function buildWhere(filters, qualify) {
   if (!filters || !filters.length) return { sql: '', args: [] };
   const clauses = [];
   const args = [];
@@ -87,7 +121,7 @@ function buildWhere(filters) {
     if (!ALLOWED_COLUMNS.has(f.field)) {
       throw new Error(`Unknown filter column: ${f.field}`);
     }
-    const col = quoteCol(f.field);
+    const col = quoteCol(f.field, qualify);
 
     switch (f.op) {
       case 'eq':
@@ -140,16 +174,16 @@ function buildWhere(filters) {
 // Used for things like SSIC search where we want
 // "(primary_ssic_code matches X) OR (primary_ssic_description matches X)".
 // Each sub-filter has the same structure as a regular filter.
-function buildOrGroup(subFilters) {
+function buildOrGroup(subFilters, qualify) {
   if (!subFilters || !subFilters.length) return { sql: '', args: [] };
-  const tmp = buildWhere(subFilters);
+  const tmp = buildWhere(subFilters, qualify);
   if (!tmp.sql) return { sql: '', args: [] };
   // buildWhere joined them with AND; we need them joined with OR instead.
   // We rebuild by running each one individually then re-joining.
   const clauses = [];
   const args = [];
   for (const f of subFilters) {
-    const one = buildWhere([f]);
+    const one = buildWhere([f], qualify);
     if (one.sql) {
       clauses.push(`(${one.sql})`);
       for (const a of one.args) args.push(a);
@@ -159,13 +193,13 @@ function buildOrGroup(subFilters) {
 }
 
 // Build the ORDER BY clause.
-function buildOrderBy(sort) {
+function buildOrderBy(sort, qualify) {
   if (!sort || !sort.length) return '';
   const parts = sort.map(s => {
     if (!ALLOWED_COLUMNS.has(s.field)) throw new Error(`Unknown sort column: ${s.field}`);
     const dir = (s.dir || 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     // SQLite NULLS LAST equivalent: standard SQL works in modern SQLite
-    return `${quoteCol(s.field)} ${dir} NULLS LAST`;
+    return `${quoteCol(s.field, qualify)} ${dir} NULLS LAST`;
   });
   return parts.join(', ');
 }
@@ -308,27 +342,56 @@ async function runQuery(req) {
   const includeCount = !!req.include_count;
   const table = 'companies';
 
-  const selectClause = buildSelect(fields);
+  // Enrichment join. When on, every returned row carries its saved enrichment
+  // (if any) as enr_* fields, so previously-enriched companies show their
+  // contacts immediately on page load without paying for another lookup.
+  const includeEnrichment = !!req.include_enrichment;
+
+  // 'all' | 'enriched' | 'not_enriched'
+  // "Enriched" deliberately means ANY saved row exists, regardless of approval
+  // state — otherwise an unreviewed company would look un-enriched and someone
+  // would pay to look it up again.
+  const enrichedFilter = ['enriched', 'not_enriched'].includes(req.enriched_filter)
+    ? req.enriched_filter : 'all';
+
+  // The join is required whenever we return enrichment data OR filter on it.
+  const useJoin = includeEnrichment || enrichedFilter !== 'all';
+
+  let selectClause = buildSelect(fields, useJoin);
+  if (includeEnrichment) selectClause += ', ' + buildEnrichmentSelect();
+
   const wherePieces = [];
   const whereArgs = [];
 
-  const baseWhere = buildWhere(filters);
+  const baseWhere = buildWhere(filters, useJoin);
   if (baseWhere.sql) {
     wherePieces.push(baseWhere.sql);
     for (const a of baseWhere.args) whereArgs.push(a);
   }
   for (const group of orGroups) {
-    const g = buildOrGroup(group);
+    const g = buildOrGroup(group, useJoin);
     if (g.sql) {
       wherePieces.push(g.sql);
       for (const a of g.args) whereArgs.push(a);
     }
   }
+
+  // Enrichment presence filter, expressed against the joined table.
+  if (enrichedFilter === 'enriched') {
+    wherePieces.push(`${ENRICH_ALIAS}."uen" IS NOT NULL`);
+  } else if (enrichedFilter === 'not_enriched') {
+    wherePieces.push(`${ENRICH_ALIAS}."uen" IS NULL`);
+  }
+
   const whereSql = wherePieces.join(' AND ');
+  const orderClause = buildOrderBy(sort, useJoin);
 
-  const orderClause = buildOrderBy(sort);
+  const fromClause = useJoin
+    ? `${table} ${COMPANIES_ALIAS} LEFT JOIN enrichments ${ENRICH_ALIAS} ` +
+      `ON ${COMPANIES_ALIAS}."uen" = ${ENRICH_ALIAS}."uen"`
+    : table;
 
-  let dataSql = `SELECT ${selectClause} FROM ${table}`;
+  let dataSql = `SELECT ${selectClause} FROM ${fromClause}`;
   if (whereSql) dataSql += ` WHERE ${whereSql}`;
   if (orderClause) dataSql += ` ORDER BY ${orderClause}`;
   dataSql += ` LIMIT ${limit} OFFSET ${offset}`;
@@ -340,28 +403,52 @@ async function runQuery(req) {
   // past the Netlify function timeout. In that case we skip the count query
   // entirely and signal the frontend to use the known table total instead.
   const hasAnyFilter = !!whereSql;
-  const doCount = includeCount && hasAnyFilter;
+
+  // Counting "not enriched" rows is the expensive case: it means walking all
+  // ~2M companies and probing the join for each, which risks the function
+  // timeout. When that is the ONLY filter we avoid it entirely — count the
+  // small enrichments table instead and let the frontend subtract from the
+  // table total it already knows.
+  const otherFilters = filters.length > 0 || orGroups.length > 0;
+  const cheapNotEnrichedCount =
+    includeCount && enrichedFilter === 'not_enriched' && !otherFilters;
+
+  const doCount = includeCount && hasAnyFilter && !cheapNotEnrichedCount;
 
   if (doCount) {
-    let countSql = `SELECT COUNT(*) AS total FROM ${table}`;
+    let countSql = `SELECT COUNT(*) AS total FROM ${fromClause}`;
     countSql += ` WHERE ${whereSql}`;
     statements.push({ sql: countSql, args: whereArgs });
+  } else if (cheapNotEnrichedCount) {
+    statements.push({ sql: `SELECT COUNT(*) AS total FROM enrichments`, args: [] });
   }
 
   const results = await executePipeline(statements);
   const rows = reshapeRows(results[0]);
   let total = null;
+  let unfilteredTotal = false;
+  let enrichedTotal = null;
+
   if (doCount && results[1]) {
     const cntRows = reshapeRows(results[1]);
     total = cntRows[0]?.total ?? null;
+  } else if (cheapNotEnrichedCount && results[1]) {
+    // Hand back the enriched count; the frontend computes
+    // (known table total − enriched) to get the not-enriched total.
+    const cntRows = reshapeRows(results[1]);
+    enrichedTotal = cntRows[0]?.total ?? null;
   } else if (includeCount && !hasAnyFilter) {
-    // No filter → tell the frontend to use the full-table total it already
-    // knows (avoids a multi-second COUNT scan of every row).
-    total = null;
-    var unfilteredTotal = true;
+    // No filter at all → frontend uses the full-table total it already knows.
+    unfilteredTotal = true;
   }
 
-  return { rows, total, unfiltered_total: (typeof unfilteredTotal !== 'undefined'), sql: dataSql };
+  return {
+    rows,
+    total,
+    unfiltered_total: unfilteredTotal,
+    enriched_total: enrichedTotal,   // set only for the cheap not-enriched path
+    sql: dataSql
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
