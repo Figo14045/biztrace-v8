@@ -1140,6 +1140,26 @@ body.show-advanced .advanced-only { display: block; }
         </div>
       </div>
 
+      <!-- Enrichment status -->
+      <div class="filter-group collapsed advanced-only" id="fg-enriched">
+        <div class="filter-group-header" onclick="toggleGroup('fg-enriched')">
+          <span class="filter-group-label">Enrichment Status</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:4px">
+            Applied in the database query.<br>
+            &ldquo;Enriched&rdquo; means we have looked this company up before,
+            whether or not it was approved.
+          </div>
+          <select class="filter-input" id="f-enriched" onchange="setEnrichedFilter(this.value)">
+            <option value="all">All companies</option>
+            <option value="enriched">Enriched before</option>
+            <option value="not_enriched">Not enriched yet</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Name search -->
       <div class="filter-group collapsed advanced-only" id="fg-name">
         <div class="filter-group-header" onclick="toggleGroup('fg-name')">
@@ -1246,6 +1266,7 @@ body.show-advanced .advanced-only { display: block; }
             <th title="Address density — companies sharing the same postal/level/unit"><div class="col-head" data-col="virtual_office">Virtual Office <span class="col-icons"><span class="col-sort" id="sortind-virtual_office"></span><span class="col-menu" onclick="openColMenu(event,'virtual_office','vo')">▾</span></span></div></th>
             <th>Website</th>
             <th>Contact</th>
+            <th title="Whether this company has been enriched before, and when"><div class="col-head" data-col="enriched">Enriched <span class="col-icons"><span class="col-sort" id="sortind-enriched"></span></span></div></th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
@@ -1459,6 +1480,13 @@ async function tbQuery(params, select, page = 1, retryCount = 0) {
   if (json.unfiltered_total && DB_TOTAL_COUNT) {
     count = DB_TOTAL_COUNT;
   }
+  // Counting "not enriched" would mean walking all ~2M companies and probing
+  // the join for each — the exact pattern that used to blow the function
+  // timeout. The proxy counts the small enrichments table instead and returns
+  // enriched_total; we subtract it from the table total we already know.
+  if (typeof json.enriched_total === 'number' && DB_TOTAL_COUNT) {
+    count = Math.max(DB_TOTAL_COUNT - json.enriched_total, 0);
+  }
   return { data: json.rows || [], count: count || 0 };
 }
 
@@ -1541,6 +1569,9 @@ async function init() {
   refreshSortIndicators();
   setupSmartAddress();
   loadAddressDensity();  // async, runs in background — doesn't block UI
+  // Load the review queue in the background so the pending badge is accurate
+  // from the moment the app opens, without waiting for the tab to be clicked.
+  loadQueue().then(updateQueueCount);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2471,6 +2502,19 @@ const FALLBACK_TIER_KEEP = {
   'street_or_building': ['street_name', 'building_name'],
 };
 
+
+// Enrichment status filter. Unlike the Virtual Office filter (which trims rows
+// already on screen), this one is applied in SQL, so changing it re-runs the
+// query from page 1.
+function setEnrichedFilter(mode) {
+  enrichedFilterMode = ['enriched', 'not_enriched'].includes(mode) ? mode : 'all';
+  currentPage = 1;
+  selected.clear();
+  lastFallbackTier = null;
+  updateSelectedUI();
+  fetchPage(1);
+}
+
 async function applyFilters() {
   currentPage = 1;
   selected.clear();
@@ -2640,6 +2684,45 @@ const REASON_TEXT = {
   'no_domain_matched_company_name': 'No website domain matches the company name — check the candidates below.',
   'no_match':           'Could not verify any candidate site as the company\'s own website.',
 };
+
+
+// Enrichment status cell. Deliberately quiet for un-enriched rows — most of
+// 2M companies have never been enriched, and a column full of "No" would be
+// noise. A badge plus the date carries the signal; approval state is shown as
+// a suffix so the team can see what still needs review.
+function renderEnrichedCell(enr) {
+  if (!enr || !enr.enriched_at) return '<span style="color:var(--text3)">—</span>';
+
+  const d = fmtEnrichedDate(enr.enriched_at);
+  const state = enr.approval || 'pending';
+  const cls = state === 'approved' ? 'verify'
+            : state === 'rejected' ? 'wrong'
+            : 'likely';
+  const label = state === 'approved' ? 'ENRICHED'
+              : state === 'rejected' ? 'REJECTED'
+              : 'PENDING';
+
+  const bits = [];
+  if (enr.source && enr.source !== 'saved') bits.push(`Engine: ${enr.source}`);
+  if (enr.enrichment_count > 1) bits.push(`Enriched ${enr.enrichment_count}x`);
+  if (enr.first_enriched_at && enr.first_enriched_at !== enr.enriched_at) {
+    bits.push(`First: ${fmtEnrichedDate(enr.first_enriched_at)}`);
+  }
+  const tip = bits.length ? ` title="${esc(bits.join(' · '))}"` : '';
+
+  return `<span class="badge badge-${cls}"${tip}>${label}</span>` +
+         `<div style="color:var(--text3);font-size:10px;margin-top:2px">${d}</div>`;
+}
+
+// Timestamps are stored UTC; the team reads them in Singapore time.
+function fmtEnrichedDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-SG', {
+      year: 'numeric', month: 'short', day: '2-digit', timeZone: 'Asia/Singapore'
+    });
+  } catch (e) { return String(iso).slice(0, 10); }
+}
 
 function renderContactCell(uen, enr) {
   if (!enr || !enr.badge || enr.badge === 'ERROR') return '—';
@@ -2836,6 +2919,7 @@ function renderTable() {
       <td>${websiteLinkHtml(enr.website, 'color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px')
             || (enr.badge ? `<span style="color:var(--text3);font-size:10px;font-style:italic">No website found</span>` : '—')}</td>
       <td>${renderContactCell(row.uen, enr)}</td>
+      <td>${renderEnrichedCell(enr)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -3421,8 +3505,10 @@ async function startEnrich() {
     await sleep(mode === 'ai' ? 4500 : ((mode === 'claude' || mode === 'openrouter') ? 1200 : 800));
   }
 
-  // Flush any partial batch left at the end of the run.
+  // Flush any partial batch left at the end of the run, then refresh the queue
+  // so the newly enriched companies appear for review.
   await flushEnrichSaves();
+  await loadQueue();
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
   // Covers every engine, not just Gemini.
@@ -3456,12 +3542,72 @@ function setView(v) {
   document.getElementById('queueView').hidden = (v !== 'queue');
   document.querySelectorAll('.navbtn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === v));
-  if (v === 'queue') renderQueue();
+  if (v === 'queue') {
+    // Refresh from the database each time the tab opens, so a teammate's
+    // decisions and any enrichment done elsewhere are reflected.
+    renderQueue();
+    loadQueue().then(() => { renderQueue(); updateQueueCount(); });
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════
+// REVIEW QUEUE — global, database-backed
+// ══════════════════════════════════════════════════════════════
+// The queue used to filter whatever was on screen (allResults), so pending
+// work vanished when the search changed or the page reloaded. It now runs its
+// own query against the enrichments table, so it shows every record awaiting
+// review — across sessions, and across the whole team.
+
+let queueData = [];          // company rows (with enr_* fields) for the queue
+let queueLoading = false;
+const QUEUE_LIMIT = 500;     // safety cap; see note in loadQueue()
+
+async function loadQueue() {
+  if (queueLoading) return;
+  queueLoading = true;
+  try {
+    const r = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: DEFAULT_FIELDS,
+        include_enrichment: true,
+        // Every enriched record, not just pending ones — the queue header shows
+        // approved/rejected counts too, and Salwa can click an approved card to
+        // undo it. Capped because this is a review list, not a browse view.
+        enriched_filter: 'enriched',
+        sort: [{ field: 'entity_name', dir: 'asc' }],
+        limit: QUEUE_LIMIT,
+        offset: 0,
+        include_count: true
+      })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'queue load failed');
+
+    queueData = j.rows || [];
+    // Hydrating here means approve/reject reads the same enrichData the rest
+    // of the app uses, so a decision made in the queue shows on Home too.
+    hydrateFromRows(queueData);
+
+    if (typeof j.total === 'number' && j.total > QUEUE_LIMIT) {
+      console.warn(`Queue shows ${QUEUE_LIMIT} of ${j.total} enriched records.`);
+    }
+  } catch (e) {
+    console.warn('Could not load review queue:', e.message);
+    showToast('Could not load the review queue');
+  } finally {
+    queueLoading = false;
+  }
 }
 
 function queueRows() {
-  // Only companies we have actually enriched, in table order.
-  return (allResults || []).filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
+  // Backed by the queue's own query (queueData), so it is independent of
+  // whatever is currently searched on Home. Falls back to the on-screen
+  // results if the queue has not loaded yet.
+  const source = queueData.length ? queueData : (allResults || []);
+  return source.filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
 }
 
 function updateQueueCount() {
