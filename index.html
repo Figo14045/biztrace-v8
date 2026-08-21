@@ -948,6 +948,10 @@ body.show-advanced .advanced-only { display: block; }
     <button class="navbtn" data-view="queue" onclick="setView('queue')">
       Suggestion Queue <span id="nav-pending" class="navcount">0</span>
     </button>
+    <button class="navbtn" data-view="enriched" onclick="setView('enriched')"
+            title="Every company we have already looked up, whatever the approval state">
+      Enriched Records
+    </button>
   </nav>
   <div class="spacer"></div>
   <div id="total-badge">DB: <span id="db-count">—</span> companies</div>
@@ -1572,6 +1576,7 @@ async function init() {
   // Load the review queue in the background so the pending badge is accurate
   // from the moment the app opens, without waiting for the tab to be clicked.
   loadQueue().then(updateQueueCount);
+  refreshNavActive();
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2512,6 +2517,7 @@ function setEnrichedFilter(mode) {
   selected.clear();
   lastFallbackTier = null;
   updateSelectedUI();
+  refreshNavActive();  // the Enriched Records tab follows this select
   fetchPage(1);
 }
 
@@ -3537,17 +3543,80 @@ async function startEnrich() {
 let currentView = 'home';
 
 function setView(v) {
+  // "Enriched Records" is not a third dataset — it is the home table with the
+  // Enrichment Status filter pinned to "Enriched before" and everything else
+  // cleared. Doing it this way means it inherits sorting, paging, column
+  // filters and export for free, because it IS the home table. The tab is
+  // therefore an action, not a view; see showEnrichedRecords().
+  if (v === 'enriched') { showEnrichedRecords(); return; }
+
   currentView = v;
   document.getElementById('layout').hidden = (v !== 'home');
   document.getElementById('queueView').hidden = (v !== 'queue');
-  document.querySelectorAll('.navbtn').forEach(b =>
-    b.classList.toggle('active', b.dataset.view === v));
+  refreshNavActive();
   if (v === 'queue') {
     // Refresh from the database each time the tab opens, so a teammate's
     // decisions and any enrichment done elsewhere are reflected.
     renderQueue();
     loadQueue().then(() => { renderQueue(); updateQueueCount(); });
   }
+}
+
+// Which nav button lights up. Deliberately derived from state rather than
+// stored separately: "Enriched Records" is active exactly while the home view
+// is showing and the enrichment filter is pinned to "enriched". So if the user
+// switches that sidebar select back to "All companies", the tab de-highlights
+// on its own and there is no stale-highlight bug to chase.
+function refreshNavActive() {
+  const active = currentView === 'queue'
+    ? 'queue'
+    : (enrichedFilterMode === 'enriched' ? 'enriched' : 'home');
+  document.querySelectorAll('.navbtn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === active));
+}
+
+// Enriched Records: every company that has a row in `enrichments`, regardless
+// of approval state or outcome (NOT_FOUND rows included — they are saved
+// deliberately so we never pay to re-check a dead end, and they belong in a
+// record of what has been looked up).
+//
+// Note on cost: with the enrichment filter set to "enriched" and NO other
+// filter, query.js takes its cheap path — INNER JOIN driven from the small
+// enrichments table, and the row count answered by COUNT(*) FROM enrichments
+// rather than a 2M-row scan. Clearing the other filters first is what keeps
+// us on that path, not just a cosmetic reset.
+async function showEnrichedRecords() {
+  currentView = 'home';
+  document.getElementById('layout').hidden = false;
+  document.getElementById('queueView').hidden = true;
+
+  // Clear every other filter so this is a clean "show me everything enriched".
+  clearAllFilters({ silent: true });
+
+  // Reset the search state a fresh search would reset, so the address
+  // fallback cascade doesn't carry over from whatever was on screen.
+  smartParserUsed  = false;
+  lastFallbackTier = null;
+  selected.clear();
+  updateSelectedUI();
+
+  // Reveal the control that is doing the filtering, so the state is visible
+  // and undoable rather than mysterious. The Enrichment Status group lives
+  // behind the advanced-filters toggle and starts collapsed.
+  const advCb = document.getElementById('advanced-cb');
+  if (advCb && !advCb.checked) {
+    advCb.checked = true;
+    document.body.classList.add('show-advanced');
+  }
+  document.getElementById('fg-enriched')?.classList.remove('collapsed');
+
+  const sel = document.getElementById('f-enriched');
+  if (sel) sel.value = 'enriched';
+  enrichedFilterMode = 'enriched';
+
+  currentPage = 1;
+  refreshNavActive();
+  await fetchPage(1);
 }
 
 
@@ -4242,7 +4311,12 @@ function toggleGroup(id) {
   document.getElementById(id).classList.toggle('collapsed');
 }
 
-function clearAllFilters() {
+// opts.silent suppresses the toast — used by showEnrichedRecords(), which
+// clears filters as a side effect of switching tabs rather than because the
+// user asked for a clear. Deliberately does NOT touch the Enrichment Status
+// select: that has always been outside "Clear all" (it is a DB-level filter,
+// not a search field), and showEnrichedRecords sets it explicitly afterwards.
+function clearAllFilters(opts) {
   document.getElementById('f-smart-addr').value = '';
   document.getElementById('smart-addr-preview').textContent = '';
   document.getElementById('f-postal').value = '';
@@ -4267,7 +4341,7 @@ function clearAllFilters() {
   // Clear column filters too
   columnFilters = {};
   refreshColIndicators();
-  showToast('Filters cleared');
+  if (!opts || !opts.silent) showToast('Filters cleared');
 }
 
 function getChecked(elId) {
