@@ -383,7 +383,8 @@ async function runQuery(req) {
 
   // Enrichment presence filter, expressed against the joined table.
   if (enrichedFilter === 'enriched') {
-    wherePieces.push(`${ENRICH_ALIAS}."uen" IS NOT NULL`);
+    // No predicate needed — the INNER JOIN above already restricts to rows
+    // that have a matching enrichment.
   } else if (enrichedFilter === 'not_enriched') {
     wherePieces.push(`${ENRICH_ALIAS}."uen" IS NULL`);
   }
@@ -397,8 +398,15 @@ async function runQuery(req) {
   const whereSql = wherePieces.join(' AND ');
   const orderClause = buildOrderBy(sort, useJoin);
 
+  // 'enriched' uses an INNER JOIN so the query planner can start from the small
+  // enrichments table (hundreds of rows) and look each company up by its uen
+  // index. A LEFT JOIN with "e.uen IS NOT NULL" is logically the same but makes
+  // SQLite walk all ~2M companies, which blows the function timeout.
+  const joinType = (enrichedFilter === 'enriched' || approvalFilter !== 'any')
+    ? 'INNER JOIN' : 'LEFT JOIN';
+
   const fromClause = useJoin
-    ? `${table} ${COMPANIES_ALIAS} LEFT JOIN enrichments ${ENRICH_ALIAS} ` +
+    ? `${table} ${COMPANIES_ALIAS} ${joinType} enrichments ${ENRICH_ALIAS} ` +
       `ON ${COMPANIES_ALIAS}."uen" = ${ENRICH_ALIAS}."uen"`
     : table;
 
@@ -421,16 +429,24 @@ async function runQuery(req) {
   // small enrichments table instead and let the frontend subtract from the
   // table total it already knows.
   const otherFilters = filters.length > 0 || orGroups.length > 0 || approvalFilter !== 'any';
+
+  // Counting across the 2M-row companies table is what used to time out, so
+  // both enrichment-only cases are answered from the small enrichments table:
+  //   enriched      → COUNT(enrichments) IS the answer
+  //   not_enriched  → total − COUNT(enrichments), computed by the frontend
+  const cheapEnrichedCount =
+    includeCount && enrichedFilter === 'enriched' && !otherFilters;
   const cheapNotEnrichedCount =
     includeCount && enrichedFilter === 'not_enriched' && !otherFilters;
+  const cheapCount = cheapEnrichedCount || cheapNotEnrichedCount;
 
-  const doCount = includeCount && hasAnyFilter && !cheapNotEnrichedCount;
+  const doCount = includeCount && hasAnyFilter && !cheapCount;
 
   if (doCount) {
     let countSql = `SELECT COUNT(*) AS total FROM ${fromClause}`;
     countSql += ` WHERE ${whereSql}`;
     statements.push({ sql: countSql, args: whereArgs });
-  } else if (cheapNotEnrichedCount) {
+  } else if (cheapCount) {
     statements.push({ sql: `SELECT COUNT(*) AS total FROM enrichments`, args: [] });
   }
 
@@ -443,12 +459,16 @@ async function runQuery(req) {
   if (doCount && results[1]) {
     const cntRows = reshapeRows(results[1]);
     total = cntRows[0]?.total ?? null;
+  } else if (cheapEnrichedCount && results[1]) {
+    // Every enrichment row corresponds to one company, so this is the total.
+    const cntRows = reshapeRows(results[1]);
+    total = cntRows[0]?.total ?? null;
   } else if (cheapNotEnrichedCount && results[1]) {
     // Hand back the enriched count; the frontend computes
     // (known table total − enriched) to get the not-enriched total.
     const cntRows = reshapeRows(results[1]);
     enrichedTotal = cntRows[0]?.total ?? null;
-  } else if (includeCount && !hasAnyFilter) {
+  } else if (includeCount && !hasAnyFilter && enrichedFilter === 'all' && approvalFilter === 'any') {
     // No filter at all → frontend uses the full-table total it already knows.
     unfilteredTotal = true;
   }
