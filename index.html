@@ -1423,6 +1423,12 @@ async function tbQuery(params, select, page = 1, retryCount = 0) {
   turso.offset = (page - 1) * PAGE;
   turso.include_count = true;
   turso.fields = DEFAULT_FIELDS;
+  // Join saved enrichments so results carry enr_* fields.
+  turso.include_enrichment = true;
+  // Set by the sidebar Enrichment Status filter: all | enriched | not_enriched
+  if (typeof enrichedFilterMode !== 'undefined' && enrichedFilterMode !== 'all') {
+    turso.enriched_filter = enrichedFilterMode;
+  }
 
   const r = await fetch(PROXY_URL, {
     method: 'POST',
@@ -1518,6 +1524,7 @@ let sortCol      = 'entity_name';
 let sortAsc      = true;
 let selected     = new Set();
 let enrichData   = {};   // uen → {website, phone, email, badge}
+let enrichedFilterMode = 'all';  // all | enriched | not_enriched (sidebar filter)
 let filterOptions = {};  // populated from DB distinct values
 let addressDensity = new Map();  // "postal|level|unit" → count of companies sharing that exact unit
 
@@ -2572,6 +2579,9 @@ async function fetchPage(page) {
     lastFallbackTier = tier;
     totalCount  = count;
     allResults  = data;
+    // Pull in any saved enrichments that came back with these rows, so
+    // previously-enriched companies show their contacts immediately.
+    hydrateFromRows(data);
     currentPage = page;
     renderTable();
     renderPagination();
@@ -3072,6 +3082,167 @@ function downloadCSV(rows, filename) {
   a.click();
 }
 
+
+// ══════════════════════════════════════════════════════════════
+// ENRICHMENT PERSISTENCE
+// ══════════════════════════════════════════════════════════════
+// Enrichment results are saved to the `enrichments` table so they survive a
+// page refresh and are shared across the team. Three parts:
+//   hydrateEnrichment  — turn joined enr_* columns back into enrichData entries
+//   queueEnrichSave    — buffer writes, flushing in batches
+//   persistApproval    — save an approve/reject decision immediately
+
+// Map a saved DB record (enr_* fields on a joined row) back into the shape the
+// table and queue already expect. Confidence drives the badge exactly as it
+// does for a live enrichment, so saved rows render identically.
+function hydrateEnrichment(row) {
+  if (!row || row.enr_enriched_at == null) return null;
+
+  const conf = row.enr_identity_confidence || row.enr_contact_confidence || null;
+  const map = {
+    'HIGH':   { badge: 'VERIFIED',   badgeClass: 'verify' },
+    'MEDIUM': { badge: 'LIKELY',     badgeClass: 'likely' },
+    'LOW':    { badge: 'UNVERIFIED', badgeClass: 'unver'  },
+    'NONE':   { badge: 'NO MATCH',   badgeClass: 'wrong'  },
+  };
+  const m = map[conf] || (
+    (row.enr_website || row.enr_email || row.enr_phone)
+      ? map['MEDIUM'] : map['NONE']
+  );
+
+  return {
+    website: row.enr_website || null,
+    email:   row.enr_email   || null,
+    phone:   row.enr_phone   || null,
+    linkedin: row.enr_linkedin || null,
+    description: row.enr_description || '',
+    badge: m.badge,
+    badgeClass: m.badgeClass,
+    reason: row.enr_description || '',
+    candidates: [],
+    identity_confidence: row.enr_identity_confidence || '',
+    contact_confidence:  row.enr_contact_confidence  || '',
+    email_source_url: row.enr_email_source_url || '',
+    phone_source_url: row.enr_phone_source_url || '',
+    email_source: row.enr_email_source || 'none',
+    source: row.enr_engine || 'saved',
+    model_used: row.enr_model_used || null,
+    approval: row.enr_approval || 'pending',
+    enriched_at: row.enr_enriched_at,
+    first_enriched_at: row.enr_first_enriched_at || row.enr_enriched_at,
+    enrichment_count: row.enr_enrichment_count || 1,
+    persisted: true,
+  };
+}
+
+// Fill enrichData from a freshly-fetched page of rows.
+//
+// We do NOT clobber a fresher in-memory result with an older saved one: a
+// company enriched this session but not yet flushed would otherwise lose its
+// new data when the search re-runs.
+function hydrateFromRows(rows) {
+  let n = 0;
+  for (const row of (rows || [])) {
+    const saved = hydrateEnrichment(row);
+    if (!saved) continue;
+
+    const existing = enrichData[row.uen];
+    if (existing && !existing.persisted) continue;                 // local is newer
+    if (existing && existing.enriched_at > saved.enriched_at) continue;
+
+    enrichData[row.uen] = saved;
+    n++;
+  }
+  if (n) console.log(`Hydrated ${n} saved enrichment(s) from the database`);
+  return n;
+}
+
+// ── Write buffer ──────────────────────────────────────────────
+// Enrichment costs money, so we never want to lose a result. Writes are
+// buffered and flushed every ENRICH_SAVE_BATCH companies (and once at the end
+// of a run), so a browser crash can lose at most that many lookups.
+const ENRICH_SAVE_BATCH = 10;
+let enrichSaveBuffer = [];
+
+function enrichRecordFor(uen) {
+  const e = enrichData[uen];
+  if (!e) return null;
+  const gotSomething = !!(e.website || e.email || e.phone);
+  return {
+    uen,
+    website: e.website || null,
+    email: e.email || null,
+    phone: e.phone || null,
+    linkedin: e.linkedin || null,
+    description: e.description || null,
+    identity_confidence: e.identity_confidence || null,
+    contact_confidence: e.contact_confidence || null,
+    email_source_url: e.email_source_url || null,
+    phone_source_url: e.phone_source_url || null,
+    email_source: e.email_source || 'none',
+    email_verdict: e.email_check ? e.email_check.verdict : null,
+    email_domain_match: e.email_check ? !!e.email_check.domain_match : false,
+    engine: e.source || null,
+    model_used: e.model_used || null,
+    // NOT_FOUND is deliberately saved too — it stops the team paying to
+    // re-check companies we already know have no findable contact details.
+    outcome: !gotSomething ? 'NOT_FOUND'
+           : (e.website && (e.email || e.phone)) ? 'FOUND' : 'PARTIAL',
+    approval: e.approval || 'pending',
+  };
+}
+
+function queueEnrichSave(uen) {
+  const rec = enrichRecordFor(uen);
+  if (rec) enrichSaveBuffer.push(rec);
+  if (enrichSaveBuffer.length >= ENRICH_SAVE_BATCH) return flushEnrichSaves();
+  return Promise.resolve();
+}
+
+// A save failure must never abort an enrichment run — the lookups are already
+// paid for, so we warn and carry on rather than throwing.
+async function flushEnrichSaves() {
+  if (!enrichSaveBuffer.length) return;
+  const batch = enrichSaveBuffer;
+  enrichSaveBuffer = [];
+  try {
+    const r = await fetch('/.netlify/functions/enrich-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'save', records: batch })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'save failed');
+    for (const rec of batch) {
+      if (enrichData[rec.uen]) {
+        enrichData[rec.uen].persisted = true;
+        enrichData[rec.uen].enriched_at = j.enriched_at;
+      }
+    }
+    console.log(`Saved ${batch.length} enrichment(s)`);
+  } catch (e) {
+    console.warn('Enrichment save failed (results kept in memory):', e.message);
+    showToast('Could not save enrichment to database — results still shown');
+  }
+}
+
+// Persist a single approve/reject. Optimistic: the UI has already updated, so
+// we only need to tell the user if the write did not stick.
+async function persistApproval(uen, state) {
+  try {
+    const r = await fetch('/.netlify/functions/enrich-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', records: [{ uen, approval: state }] })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'approve failed');
+  } catch (e) {
+    console.warn('Approval not saved:', e.message);
+    showToast('Could not save approval — it may not persist');
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 // ENRICHMENT MODE + KEYS
 // ══════════════════════════════════════════════════════════════
@@ -3217,10 +3388,16 @@ async function startEnrich() {
       } else {
         await enrichOneSerp(row, key);
       }
+      // Buffer the result for write-back. Flushes automatically every
+      // ENRICH_SAVE_BATCH companies so a crash can't lose a whole run.
+      await queueEnrichSave(row.uen);
     } catch(e) {
       // Daily Gemini quota exhausted — stop the whole run rather than marking
       // every remaining row as a failure. The rest would all fail identically.
       if (e.dailyQuota) {
+        // Save whatever we already enriched before bailing out — those lookups
+        // were paid for and must not be lost just because the quota ran out.
+        await flushEnrichSaves();
         document.getElementById('enrich-progress').innerHTML =
           `⚠ Daily Gemini quota reached (free tier). ${i} of ${selRows.length} enriched. ` +
           `Resets at midnight Pacific time, or switch to SerpAPI / another Gemini key.`;
@@ -3243,6 +3420,9 @@ async function startEnrich() {
     // with high limits, so 1.2s is plenty. SerpAPI has no per-minute pressure.
     await sleep(mode === 'ai' ? 4500 : ((mode === 'claude' || mode === 'openrouter') ? 1200 : 800));
   }
+
+  // Flush any partial batch left at the end of the run.
+  await flushEnrichSaves();
 
   document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
   // Covers every engine, not just Gemini.
@@ -3297,6 +3477,9 @@ function setApproval(uen, state) {
   const e = enrichData[uen];
   if (!e) return;
   e.approval = (e.approval === state) ? 'pending' : state;   // click again to undo
+  // Persist the decision. Optimistic — the UI updates immediately and we only
+  // surface a message if the write fails.
+  persistApproval(uen, e.approval);
   renderQueue();
   updateQueueCount();
   if (typeof renderTable === 'function' && currentView === 'home') renderTable();

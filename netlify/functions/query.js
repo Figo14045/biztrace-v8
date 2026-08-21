@@ -354,8 +354,13 @@ async function runQuery(req) {
   const enrichedFilter = ['enriched', 'not_enriched'].includes(req.enriched_filter)
     ? req.enriched_filter : 'all';
 
+  // Approval state filter, used by the review queue to fetch every pending
+  // record across all sessions and users — not just whatever is on screen.
+  const approvalFilter = ['approved', 'pending', 'rejected', 'none'].includes(req.approval_filter)
+    ? req.approval_filter : 'any';
+
   // The join is required whenever we return enrichment data OR filter on it.
-  const useJoin = includeEnrichment || enrichedFilter !== 'all';
+  const useJoin = includeEnrichment || enrichedFilter !== 'all' || approvalFilter !== 'any';
 
   let selectClause = buildSelect(fields, useJoin);
   if (includeEnrichment) selectClause += ', ' + buildEnrichmentSelect();
@@ -381,6 +386,12 @@ async function runQuery(req) {
     wherePieces.push(`${ENRICH_ALIAS}."uen" IS NOT NULL`);
   } else if (enrichedFilter === 'not_enriched') {
     wherePieces.push(`${ENRICH_ALIAS}."uen" IS NULL`);
+  }
+
+  if (approvalFilter !== 'any') {
+    // Parameterised, and implies the row exists, so no extra NULL check needed.
+    wherePieces.push(`${ENRICH_ALIAS}."approval" = ?`);
+    whereArgs.push(approvalFilter);
   }
 
   const whereSql = wherePieces.join(' AND ');
@@ -409,7 +420,7 @@ async function runQuery(req) {
   // timeout. When that is the ONLY filter we avoid it entirely — count the
   // small enrichments table instead and let the frontend subtract from the
   // table total it already knows.
-  const otherFilters = filters.length > 0 || orGroups.length > 0;
+  const otherFilters = filters.length > 0 || orGroups.length > 0 || approvalFilter !== 'any';
   const cheapNotEnrichedCount =
     includeCount && enrichedFilter === 'not_enriched' && !otherFilters;
 
