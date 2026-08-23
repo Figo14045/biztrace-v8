@@ -1,0 +1,52 @@
+-- ══════════════════════════════════════════════════════════════════════════
+-- BizTrace — migration 004: a UNIQUE index on companies.uen
+--
+-- Run before scripts/apply-diff.js. The loader's preflight check refuses to
+-- write without this.
+--
+-- ── Why it is required ───────────────────────────────────────────────────
+-- Two separate reasons, and the second matters more than the first.
+--
+-- 1. CORRECTNESS. The loader upserts with ON CONFLICT("uen") DO UPDATE.
+--    SQLite can only resolve ON CONFLICT against a UNIQUE constraint or a
+--    PRIMARY KEY. Without one, every upsert is rejected.
+--
+-- 2. PERFORMANCE, and this is the sharp edge. The badge phase runs
+--    87,037 statements of the form:
+--
+--        UPDATE companies SET change_status = ?, change_month = ? WHERE uen = ?
+--
+--    With no index on uen, each of those is a full scan of 2,080,623 rows.
+--    That is roughly 181 billion row visits for the badge phase alone — it
+--    would not finish in any useful amount of time. The same applies to the
+--    upsert phase, which probes by uen 436,283 times.
+--
+--    This is the same lesson as the enriched-filter timeout, in a different
+--    costume: the query planner needs a way in that is not "read everything".
+--
+-- ── Is uen actually unique? ──────────────────────────────────────────────
+-- Yes, verified against the source data rather than assumed. Both ACRA
+-- releases were read into a UEN-keyed map and the entry count came back
+-- identical to the raw line count — 2,080,623 for April and 2,110,094 for
+-- August. If any UEN repeated, the map would have collapsed the duplicates
+-- and the numbers would have diverged. They did not, so this index will
+-- build cleanly.
+--
+-- If it does fail with a uniqueness violation, do NOT force it — that would
+-- mean the loaded table drifted from the source, which is worth diagnosing
+-- before anything writes over it.
+--
+-- ── Expect this to take a while ──────────────────────────────────────────
+-- Building an index over 2M rows is real work, and it runs as one statement,
+-- so it cannot be resumed or batched. A few minutes is normal. It happens
+-- once; every future monthly load reuses it.
+--
+-- ── A possible tidy-up afterwards ────────────────────────────────────────
+-- If a NON-unique index on uen already exists (the project has 10 indexes and
+-- the enrichments join probes companies by uen, so one plausibly does), it is
+-- now redundant — this index serves every query the old one served. Check
+-- with db-status.js, and drop it if you find one, to save space against the
+-- 9GB budget. Do that only after this index exists.
+-- ══════════════════════════════════════════════════════════════════════════
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_uen ON companies(uen);

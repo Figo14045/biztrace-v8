@@ -1,0 +1,51 @@
+-- ══════════════════════════════════════════════════════════════════════════
+-- BizTrace — migration 005: actually make companies.uen unique
+--
+-- Supersedes 004, which reported success and did nothing.
+--
+-- ── What went wrong in 004 ───────────────────────────────────────────────
+-- 004 said:
+--
+--     CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_uen ON companies(uen);
+--
+-- A NON-unique index called idx_companies_uen already existed on this table.
+-- IF NOT EXISTS matches on the object NAME, not on the definition — so SQLite
+-- saw the name was taken, skipped the statement, and returned success. The
+-- migration printed "ok" and "1 applied" while changing nothing, and the
+-- loader's preflight rejected the table again on the next run.
+--
+-- The lesson is worth keeping: with CREATE ... IF NOT EXISTS, "it succeeded"
+-- and "the object now has the shape you asked for" are different claims. Only
+-- reading the schema back proves the second one — which is what the index
+-- listing in db-status.js is for.
+--
+-- ── What this does ───────────────────────────────────────────────────────
+-- Drops the non-unique index and rebuilds it unique under the same name. The
+-- unique index serves every query the old one served — uen equality lookups,
+-- the enrichments join probe — so nothing regresses, and keeping one index
+-- instead of two avoids carrying 2M redundant entries against the 9GB budget.
+--
+-- Note there is NO "IF NOT EXISTS" on the CREATE. That is deliberate: this
+-- statement should fail loudly if it cannot do what it says, rather than skip
+-- quietly the way 004 did.
+--
+-- ── If the CREATE fails with a uniqueness violation ──────────────────────
+-- Do not work around it. It would mean companies holds duplicate UENs, which
+-- contradicts the source data — both ACRA releases were read into a UEN-keyed
+-- map and the entry counts matched the raw line counts exactly (2,080,623 and
+-- 2,110,094), so no UEN repeats in the files. A duplicate in the table would
+-- mean the loaded data drifted from the source, and that is worth diagnosing
+-- before anything writes over it. Find them with:
+--
+--     SELECT uen, COUNT(*) n FROM companies GROUP BY uen HAVING n > 1 LIMIT 20;
+--
+-- ── Timing ───────────────────────────────────────────────────────────────
+-- Rebuilding an index over 2M rows is a single statement, so there is no
+-- progress output and it cannot be resumed. A few minutes is normal. Between
+-- the DROP and the CREATE there is briefly no index on uen; nothing else
+-- should be running against the database during that window.
+-- ══════════════════════════════════════════════════════════════════════════
+
+DROP INDEX IF EXISTS idx_companies_uen;
+
+CREATE UNIQUE INDEX idx_companies_uen ON companies(uen);

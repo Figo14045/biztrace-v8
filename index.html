@@ -1696,6 +1696,20 @@ async function loadChangeSummary() {
 
     currentChangeMonth = json.current_month || null;
     changeCounts = json.counts || {};
+
+    // The authoritative table size, recorded by the loader at the end of each
+    // monthly refresh. This replaces the hardcoded seed in loadDbCount(),
+    // which was stuck at the April figure of 2,080,623 — the background
+    // refresh that was meant to correct it could never fire, because an
+    // unfiltered query deliberately returns total:null rather than paying for
+    // a COUNT(*) across 2M rows. data_versions is a one-row lookup and always
+    // current, so it is the right source.
+    const total = Number(json.versions?.[0]?.companies_total || 0);
+    if (total > 0) {
+      DB_TOTAL_COUNT = total;
+      const el = document.getElementById('db-count');
+      if (el) el.textContent = total.toLocaleString();
+    }
     renderChangeFilter();
     renderTable();   // redraw so badges appear once we know the current month
   } catch (e) {
@@ -2208,19 +2222,23 @@ function postalsMatchingTiers(tiers) {
 }
 
 async function loadDbCount() {
-  // Seed with the known table size immediately so the UI and the unfiltered
-  // count fallback work right away, without waiting on a slow COUNT scan.
+  // A floor, shown for the fraction of a second before data_versions answers.
+  // Deliberately the April baseline rather than a guess at the current size:
+  // if the change summary ever fails, an understated count is safer than an
+  // invented one. loadChangeSummary() overwrites it with the real figure.
   DB_TOTAL_COUNT = 2080623;
   document.getElementById('db-count').textContent = DB_TOTAL_COUNT.toLocaleString();
 
   if (USE_TURSO) {
-    // Refresh the real count in the background — don't block page load on it.
-    tbCount().then(total => {
-      if (total) {
-        DB_TOTAL_COUNT = total;
-        document.getElementById('db-count').textContent = total.toLocaleString();
-      }
-    }).catch(() => { /* keep the seeded value */ });
+    // The real count arrives from loadChangeSummary(), which reads
+    // data_versions — one row, always current, no scan.
+    //
+    // This used to call tbCount() here, which could never work: it issues an
+    // UNFILTERED query, and the proxy answers those with total:null and
+    // unfiltered_total:true precisely so it does not COUNT(*) across 2M rows.
+    // `json.total || 0` was therefore always 0, the `if (total)` never fired,
+    // and the seed above was what everyone saw — silently stale by 29,473
+    // companies the moment the August release landed.
     return;
   }
   const r = await sbHead('companies', {});
