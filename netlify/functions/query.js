@@ -36,6 +36,11 @@ const ALLOWED_COLUMNS = new Set([
   'name_of_audit_firm2', 'uen_of_audit_firm3', 'name_of_audit_firm3',
   'uen_of_audit_firm4', 'name_of_audit_firm4', 'uen_of_audit_firm5',
   'name_of_audit_firm5', 'source_file',
+  // Stage 3 change tracking. Denormalised onto companies so a badge can be
+  // rendered without joining a changelog across 2M rows. change_status holds
+  // the highest-priority change for change_month; the full per-field list
+  // lives in company_changes.
+  'change_status', 'change_month',
   // Derived columns BizTrace expects but don't exist in Turso —
   // we compute them on-the-fly via SELECT expressions (see SELECT_EXPR below)
   'has_auditor', 'full_address',
@@ -359,6 +364,18 @@ async function runQuery(req) {
   const approvalFilter = ['approved', 'pending', 'rejected', 'none'].includes(req.approval_filter)
     ? req.approval_filter : 'any';
 
+  // Stage 3 change filter. 'any' (off), 'changed' (anything that changed in
+  // the current release), or one specific change type.
+  //
+  // The vocabulary is owned by scripts/lib/acra.js, which is the only writer
+  // to these columns. Listed here rather than imported because Netlify
+  // functions bundle independently of the offline scripts.
+  const CHANGE_TYPES = ['NEW_REGISTERED', 'STRUCK_OFF', 'GAZETTED',
+                        'REVIVED', 'STATUS_CHANGED', 'ADDRESS_CHANGED'];
+  const changeFilter = (req.change_filter === 'changed' ||
+                        CHANGE_TYPES.includes(req.change_filter))
+    ? req.change_filter : 'any';
+
   // The join is required whenever we return enrichment data OR filter on it.
   const useJoin = includeEnrichment || enrichedFilter !== 'all' || approvalFilter !== 'any';
 
@@ -393,6 +410,26 @@ async function runQuery(req) {
     // Parameterised, and implies the row exists, so no extra NULL check needed.
     wherePieces.push(`${ENRICH_ALIAS}."approval" = ?`);
     whereArgs.push(approvalFilter);
+  }
+
+  // Change filter. Always pinned to the CURRENT release, resolved server-side
+  // from data_versions rather than taken from the client — a stale browser tab
+  // must not be able to filter on last month's badges.
+  //
+  // (SELECT MAX(month) FROM data_versions) is a constant subquery over a table
+  // with one row per monthly release, so SQLite evaluates it once. Combined
+  // with change_status IS NOT NULL it matches idx_companies_change, which is
+  // PARTIAL — it only carries changed rows, so this reads ~87k index entries
+  // rather than scanning 2M companies.
+  if (changeFilter !== 'any') {
+    wherePieces.push(
+      `"change_status" IS NOT NULL AND ` +
+      `"change_month" = (SELECT MAX(month) FROM data_versions)`
+    );
+    if (changeFilter !== 'changed') {
+      wherePieces.push(`"change_status" = ?`);
+      whereArgs.push(changeFilter);
+    }
   }
 
   const whereSql = wherePieces.join(' AND ');
@@ -544,6 +581,36 @@ exports.handler = async function(event) {
           count: result.rows.length
         })};
       }
+      // Which ACRA release is loaded, and how much changed in it. The
+      // frontend calls this once at startup: a badge is rendered only when a
+      // row's change_month equals the current release, which is how "New
+      // Registered" stops showing after a month without a monthly UPDATE
+      // across 2M rows.
+      //
+      // Cheap by construction — data_versions holds one row per release, and
+      // the badge breakdown reads the partial index, not the companies table.
+      if (req.mode === 'change_summary') {
+        const results = await executePipeline([
+          { sql: `SELECT month, loaded_at, companies_total, changes_recorded
+                    FROM data_versions ORDER BY month DESC LIMIT 12`, args: [] },
+          { sql: `SELECT change_status, COUNT(*) AS n
+                    FROM companies
+                   WHERE change_status IS NOT NULL
+                     AND change_month = (SELECT MAX(month) FROM data_versions)
+                GROUP BY change_status`, args: [] },
+        ]);
+        const versions = reshapeRows(results[0]);
+        const byType = {};
+        for (const r of reshapeRows(results[1])) byType[r.change_status] = Number(r.n);
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({
+          ok: true,
+          current_month: versions[0]?.month || null,
+          previous_month: versions[1]?.month || null,
+          versions,
+          counts: byType,
+        })};
+      }
+
       if (req.mode === 'distinct') {
         const result = await runDistinct(req);
         return { statusCode: 200, headers: CORS, body: JSON.stringify({

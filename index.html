@@ -930,6 +930,30 @@ body.show-advanced .advanced-only { display: block; }
 }
 #toast.show { transform: translateX(-50%) translateY(0); }
 
+/* ── Change badges (Stage 3) ──────────────────────────────────────────────
+   Colour carries meaning here, so it is doubled by the label text rather
+   than left to hue alone: red/amber/green are the three most common
+   colour-vision confusions, and "Struck Off" vs "Revived" is exactly the
+   distinction a salesperson must not get wrong. */
+.chbadge {
+  display:inline-block; font-family:var(--mono); font-size:9px;
+  letter-spacing:0.06em; text-transform:uppercase;
+  padding:2px 6px; border-radius:3px; white-space:nowrap;
+  border:1px solid transparent; cursor:default;
+}
+/* Terminal — stop working this lead. */
+.chbadge.ch-dead    { background:rgba(220,38,38,0.14);  color:#f87171; border-color:rgba(220,38,38,0.35); }
+/* Fresh registration. */
+.chbadge.ch-new     { background:rgba(34,197,94,0.14);  color:#4ade80; border-color:rgba(34,197,94,0.35); }
+/* Back from the dead — high intent. */
+.chbadge.ch-revived { background:rgba(56,189,248,0.14); color:#38bdf8; border-color:rgba(56,189,248,0.35); }
+/* Gazetted: still contactable, but on a clock. */
+.chbadge.ch-warn    { background:rgba(245,158,11,0.14); color:#fbbf24; border-color:rgba(245,158,11,0.35); }
+/* Other status movement. */
+.chbadge.ch-status  { background:var(--surface2); color:var(--text2); border-color:var(--border2); }
+/* Relocated. */
+.chbadge.ch-moved   { background:rgba(168,85,247,0.14); color:#c084fc; border-color:rgba(168,85,247,0.35); }
+
 /* Scrollbar global */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -1144,6 +1168,24 @@ body.show-advanced .advanced-only { display: block; }
         </div>
       </div>
 
+      <!-- Month-over-month changes (Stage 3) -->
+      <div class="filter-group collapsed" id="fg-change">
+        <div class="filter-group-header" onclick="toggleGroup('fg-change')">
+          <span class="filter-group-label">Changes This Release</span>
+          <span class="filter-group-chevron">▾</span>
+        </div>
+        <div class="filter-group-body">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:4px">
+            <span id="change-release-label">Loading release…</span><br>
+            Applied in the database query. Only the current release is shown &mdash;
+            last month&rsquo;s badges stop matching on their own.
+          </div>
+          <select class="filter-input" id="f-change" onchange="setChangeFilter(this.value)">
+            <option value="any">All companies</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Enrichment status -->
       <div class="filter-group collapsed advanced-only" id="fg-enriched">
         <div class="filter-group-header" onclick="toggleGroup('fg-enriched')">
@@ -1271,6 +1313,13 @@ body.show-advanced .advanced-only { display: block; }
             <th>Website</th>
             <th>Contact</th>
             <th title="Whether this company has been enriched before, and when"><div class="col-head" data-col="enriched">Enriched <span class="col-icons"><span class="col-sort" id="sortind-enriched"></span></span></div></th>
+            <!-- Deliberately a plain header: no column menu and no sort.
+                 A "values" menu would run SELECT DISTINCT change_status over
+                 2M rows, and ORDER BY change_status cannot use the partial
+                 index (it only carries changed rows), so both would be
+                 full-table work. Filtering happens in the sidebar instead,
+                 where it is pinned to the current release and index-backed. -->
+            <th title="What changed for this company in the current ACRA release">Change</th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
@@ -1329,6 +1378,10 @@ const DEFAULT_FIELDS = [
   'postal_code','block','street_name','level_no','unit_no','building_name',
   'no_of_officers','annual_return_date','registration_incorporation_date',
   'account_due_date','uen_of_audit_firm1','name_of_audit_firm1','has_auditor',
+  // Stage 3 change badge. change_month comes along too: a badge is drawn only
+  // when it matches the current release, so last month's badges stop showing
+  // on their own rather than needing an UPDATE across 2M rows to clear them.
+  'change_status','change_month',
   // full_address is COMPUTED by query.js (block + street + unit + building +
   // postal). It is not a real Turso column, so SELECT * never returns it and
   // it must be requested explicitly. It was missing, so every enrichment ran
@@ -1454,6 +1507,11 @@ async function tbQuery(params, select, page = 1, retryCount = 0) {
   if (typeof enrichedFilterMode !== 'undefined' && enrichedFilterMode !== 'all') {
     turso.enriched_filter = enrichedFilterMode;
   }
+  // Set by the sidebar Changes filter. The proxy pins this to the current
+  // release itself, so a stale tab cannot filter on last month's badges.
+  if (typeof changeFilterMode !== 'undefined' && changeFilterMode !== 'any') {
+    turso.change_filter = changeFilterMode;
+  }
 
   const r = await fetch(PROXY_URL, {
     method: 'POST',
@@ -1557,6 +1615,35 @@ let sortAsc      = true;
 let selected     = new Set();
 let enrichData   = {};   // uen → {website, phone, email, badge}
 let enrichedFilterMode = 'all';  // all | enriched | not_enriched (sidebar filter)
+
+// ── Stage 3: month-over-month change tracking ────────────────────────────
+// currentChangeMonth is the ACRA release currently loaded, read once at
+// startup from data_versions. A row's badge is drawn ONLY when its
+// change_month equals this. That is what makes "New Registered" clear itself
+// after a month: the following release moves this value on, older badges
+// stop matching, and nothing has to be UPDATEd across 2M rows to expire them.
+let currentChangeMonth = null;
+let changeCounts = {};           // change_status → count, for the sidebar
+let changeFilterMode = 'any';    // any | changed | one of CHANGE_TYPES
+
+// Display metadata for each change type. Order here is BADGE PRIORITY, which
+// mirrors BADGE_PRIORITY in scripts/lib/acra.js — the diff picks a company's
+// single badge with the same ranking, so the two must not drift.
+const CHANGE_META = [
+  { key: 'STRUCK_OFF',      label: 'Struck Off',  cls: 'ch-dead',
+    why: 'Moved to a terminal status this release — the entity no longer exists.' },
+  { key: 'NEW_REGISTERED',  label: 'New',         cls: 'ch-new',
+    why: 'This UEN was not in the previous release.' },
+  { key: 'REVIVED',         label: 'Revived',     cls: 'ch-revived',
+    why: 'Came back to a live status from a cancelled or struck-off state.' },
+  { key: 'GAZETTED',        label: 'Gazetted',    cls: 'ch-warn',
+    why: 'ACRA has gazetted this company to be struck off. Still contactable, but on a clock.' },
+  { key: 'STATUS_CHANGED',  label: 'Status',      cls: 'ch-status',
+    why: 'Entity status changed, but not to a terminal or live state.' },
+  { key: 'ADDRESS_CHANGED', label: 'Moved',       cls: 'ch-moved',
+    why: 'Registered address changed since the previous release.' },
+];
+const CHANGE_BY_KEY = Object.fromEntries(CHANGE_META.map(c => [c.key, c]));
 let filterOptions = {};  // populated from DB distinct values
 let addressDensity = new Map();  // "postal|level|unit" → count of companies sharing that exact unit
 
@@ -1576,7 +1663,94 @@ async function init() {
   // Load the review queue in the background so the pending badge is accurate
   // from the moment the app opens, without waiting for the tab to be clicked.
   loadQueue().then(updateQueueCount);
+  loadChangeSummary();   // async, background — the table renders without it
   refreshNavActive();
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHANGE TRACKING (Stage 3)
+// ══════════════════════════════════════════════════════════════
+
+// One cheap call at startup: which release is loaded, and how many companies
+// carry each badge. Both come from small tables or the partial index, never
+// from a scan of companies.
+//
+// Deliberately not awaited by init(): if it fails or is slow, the table still
+// works and badges simply don't render. Change tracking is an enhancement to
+// the lookup tool, not a dependency of it.
+async function loadChangeSummary() {
+  try {
+    const r = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'change_summary' })
+    });
+    if (!r.ok) return;
+    const json = await r.json();
+    if (!json.ok) return;
+
+    currentChangeMonth = json.current_month || null;
+    changeCounts = json.counts || {};
+    renderChangeFilter();
+    renderTable();   // redraw so badges appear once we know the current month
+  } catch (e) {
+    console.warn('Change summary unavailable — badges will not render.', e);
+  }
+}
+
+// Fill in the sidebar filter's counts and the release label.
+function renderChangeFilter() {
+  const label = document.getElementById('change-release-label');
+  if (label) {
+    label.textContent = currentChangeMonth
+      ? `Comparing against the ${currentChangeMonth} ACRA release.`
+      : 'No release loaded yet — no changes to show.';
+  }
+
+  const sel = document.getElementById('f-change');
+  if (!sel) return;
+
+  const total = Object.values(changeCounts).reduce((a, b) => a + b, 0);
+  const opts = [
+    `<option value="any">All companies</option>`,
+    `<option value="changed">Any change (${total.toLocaleString()})</option>`,
+  ];
+  for (const c of CHANGE_META) {
+    const n = changeCounts[c.key] || 0;
+    if (!n) continue;   // hide types with nothing in them this release
+    opts.push(`<option value="${c.key}">${esc(c.label)} (${n.toLocaleString()})</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  sel.value = changeFilterMode;
+}
+
+// Applied in SQL, so changing it re-runs the query from page 1 — same shape
+// as the Enrichment Status filter.
+function setChangeFilter(mode) {
+  const valid = ['changed', ...CHANGE_META.map(c => c.key)];
+  changeFilterMode = valid.includes(mode) ? mode : 'any';
+  currentPage = 1;
+  selected.clear();
+  lastFallbackTier = null;
+  updateSelectedUI();
+  refreshNavActive();
+  fetchPage(1);
+}
+
+// The badge cell. Renders nothing at all unless the row's change_month
+// matches the release we know to be current — an old badge left on a row is
+// data, not something to show a salesperson.
+function renderChangeCell(row) {
+  if (!currentChangeMonth) return '';
+  if (!row.change_status || row.change_month !== currentChangeMonth) return '';
+
+  const meta = CHANGE_BY_KEY[row.change_status];
+  if (!meta) {
+    // A change type the frontend does not know about — show it raw rather
+    // than swallowing it, so a new type added server-side is visible.
+    return `<span class="chbadge ch-status" title="Unrecognised change type">${esc(row.change_status)}</span>`;
+  }
+  return `<span class="chbadge ${meta.cls}" title="${esc(meta.label)} — ${esc(meta.why)}">${esc(meta.label)}</span>`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2926,6 +3100,7 @@ function renderTable() {
             || (enr.badge ? `<span style="color:var(--text3);font-size:10px;font-style:italic">No website found</span>` : '—')}</td>
       <td>${renderContactCell(row.uen, enr)}</td>
       <td>${renderEnrichedCell(enr)}</td>
+      <td>${renderChangeCell(row)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -3052,6 +3227,17 @@ async function exportCSV() {
     const turso = pgrestParamsToTurso(params);
     turso.fields = DEFAULT_FIELDS;
     turso.include_count = false;
+    // Both sidebar filters are applied in SQL, not in buildParams(), so they
+    // have to be forwarded explicitly or the export silently ignores them.
+    // This was already true of the enrichment filter — exporting while
+    // filtered to "Enriched before" shipped the whole unfiltered result set.
+    // The export must match what is on screen.
+    if (typeof enrichedFilterMode !== 'undefined' && enrichedFilterMode !== 'all') {
+      turso.enriched_filter = enrichedFilterMode;
+    }
+    if (typeof changeFilterMode !== 'undefined' && changeFilterMode !== 'any') {
+      turso.change_filter = changeFilterMode;
+    }
     const batchSize = 1000;
     let offset = 0;
     while (true) {
@@ -3570,7 +3756,8 @@ function setView(v) {
 function refreshNavActive() {
   const active = currentView === 'queue'
     ? 'queue'
-    : (enrichedFilterMode === 'enriched' ? 'enriched' : 'home');
+    : (enrichedFilterMode === 'enriched' && changeFilterMode === 'any'
+        ? 'enriched' : 'home');
   document.querySelectorAll('.navbtn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === active));
 }
@@ -3613,6 +3800,12 @@ async function showEnrichedRecords() {
   const sel = document.getElementById('f-enriched');
   if (sel) sel.value = 'enriched';
   enrichedFilterMode = 'enriched';
+
+  // Clear the change filter too — this tab means "everything enriched", and
+  // leaving a change filter on would silently narrow it.
+  changeFilterMode = 'any';
+  const chSel = document.getElementById('f-change');
+  if (chSel) chSel.value = 'any';
 
   currentPage = 1;
   refreshNavActive();
