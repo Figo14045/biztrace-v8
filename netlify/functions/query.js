@@ -611,6 +611,49 @@ exports.handler = async function(event) {
         })};
       }
 
+      // Per-field change detail for a specific set of companies.
+      //
+      // Scoped to the UENs actually on screen — never a broad scan. The badge
+      // on a row is only the HIGHEST-priority change; this is the full list
+      // behind it, with old → new for every field that moved.
+      //
+      // Cheap by construction: idx_changes_uen turns this into one index seek
+      // per UEN over a 199k-row table, and the caller is capped at 200 UENs
+      // (two pages' worth). Pinned to the current release for the same reason
+      // the filter is — a stale tab must not surface last month's detail.
+      if (req.mode === 'changes_for') {
+        const uens = Array.isArray(req.uens) ? req.uens.filter(u => typeof u === 'string') : [];
+        if (!uens.length) {
+          return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true, changes: {} })};
+        }
+        if (uens.length > 200) {
+          return { statusCode: 400, headers: CORS, body: JSON.stringify({
+            ok: false, error: 'changes_for accepts at most 200 uens per request'
+          })};
+        }
+
+        const placeholders = uens.map(() => '?').join(',');
+        const results = await executePipeline([{
+          sql: `SELECT uen, change_type, field, old_value, new_value
+                  FROM company_changes
+                 WHERE uen IN (${placeholders})
+                   AND change_month = (SELECT MAX(month) FROM data_versions)
+              ORDER BY uen, change_type, field`,
+          args: uens
+        }]);
+
+        const grouped = {};
+        for (const r of reshapeRows(results[0])) {
+          (grouped[r.uen] = grouped[r.uen] || []).push({
+            change_type: r.change_type,
+            field: r.field,
+            old_value: r.old_value,
+            new_value: r.new_value,
+          });
+        }
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ ok: true, changes: grouped })};
+      }
+
       if (req.mode === 'distinct') {
         const result = await runDistinct(req);
         return { statusCode: 200, headers: CORS, body: JSON.stringify({

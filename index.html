@@ -954,6 +954,11 @@ body.show-advanced .advanced-only { display: block; }
 /* Relocated. */
 .chbadge.ch-moved   { background:rgba(168,85,247,0.14); color:#c084fc; border-color:rgba(168,85,247,0.35); }
 
+/* A badge in the table opens the full change list; one inside the detail
+   panel is just a label. Only the former gets affordance. */
+.chbadge-btn { cursor:pointer; }
+.chbadge-btn:hover { filter:brightness(1.35); }
+
 /* Scrollbar global */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -1740,17 +1745,182 @@ function setChangeFilter(mode) {
 // The badge cell. Renders nothing at all unless the row's change_month
 // matches the release we know to be current — an old badge left on a row is
 // data, not something to show a salesperson.
+//
+// The badge is a button: it shows only the highest-priority change, and the
+// interesting part (which fields moved, from what to what) is one click away
+// in showChangeDetail().
 function renderChangeCell(row) {
   if (!currentChangeMonth) return '';
   if (!row.change_status || row.change_month !== currentChangeMonth) return '';
 
   const meta = CHANGE_BY_KEY[row.change_status];
-  if (!meta) {
-    // A change type the frontend does not know about — show it raw rather
-    // than swallowing it, so a new type added server-side is visible.
-    return `<span class="chbadge ch-status" title="Unrecognised change type">${esc(row.change_status)}</span>`;
+  const label = meta ? meta.label : row.change_status;
+  const cls   = meta ? meta.cls   : 'ch-status';
+  const why   = meta ? meta.why   : 'Unrecognised change type.';
+
+  return `<span class="chbadge ${cls} chbadge-btn" ` +
+         `onclick="showChangeDetail('${esc(row.uen)}')" ` +
+         `title="${esc(label)} — ${esc(why)}\nClick for the full change list.">` +
+         `${esc(label)}</span>`;
+}
+
+// ── Change detail ────────────────────────────────────────────────────────
+// company_changes holds one row per changed FIELD, so a relocation is six
+// rows and a company that both moved and was struck off is seven. The badge
+// can only show one of those. This panel shows all of them.
+//
+// Fetched for the whole visible page at once rather than per click: the user
+// who opens one badge usually opens several, and one request for 50 UENs
+// costs the same as one request for a single UEN.
+
+let changeDetail = {};        // uen → [{change_type, field, old_value, new_value}]
+let changeDetailFetched = new Set();   // UENs we have already asked about
+
+// Friendlier names than the raw column names, which mean nothing to Nabila.
+const FIELD_LABELS = {
+  entity_status_description: 'Status',
+  block: 'Block',
+  street_name: 'Street',
+  level_no: 'Level',
+  unit_no: 'Unit',
+  building_name: 'Building',
+  postal_code: 'Postal code',
+};
+
+async function loadChangeDetail(uens) {
+  const want = uens.filter(u => u && !changeDetailFetched.has(u));
+  if (!want.length) return;
+
+  // Mark before the request, not after: two overlapping page renders should
+  // not fire the same fetch twice.
+  want.forEach(u => changeDetailFetched.add(u));
+
+  try {
+    const r = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'changes_for', uens: want.slice(0, 200) })
+    });
+    if (!r.ok) throw new Error(`proxy ${r.status}`);
+    const json = await r.json();
+    if (!json.ok) throw new Error(json.error || 'unknown');
+
+    Object.assign(changeDetail, json.changes || {});
+    // A UEN with a badge but no rows here would be a genuine inconsistency;
+    // record an empty list so the panel can say so instead of spinning.
+    for (const u of want) if (!changeDetail[u]) changeDetail[u] = [];
+  } catch (e) {
+    // Let them be retried — this is an enhancement, not a dependency.
+    want.forEach(u => changeDetailFetched.delete(u));
+    console.warn('Change detail unavailable:', e.message);
   }
-  return `<span class="chbadge ${meta.cls}" title="${esc(meta.label)} — ${esc(meta.why)}">${esc(meta.label)}</span>`;
+}
+
+function showChangeDetail(uen) {
+  const row = allResults.find(r => r.uen === uen);
+  const meta = row && CHANGE_BY_KEY[row.change_status];
+
+  document.getElementById('chg-popover')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'chg-popover';
+  overlay.style.cssText = `
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:5000;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  `;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.remove(); });
+
+  const card = document.createElement('div');
+  card.style.cssText = `
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 8px; max-width: 560px; width: 100%; max-height: 80vh;
+    overflow-y: auto; padding: 20px; font-family: var(--mono); color: var(--text);
+  `;
+  card.innerHTML = changeDetailHtml(uen, row, meta);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  // Not yet loaded (the page prefetch failed or is still in flight) — fetch
+  // this one and redraw in place.
+  if (!changeDetail[uen]) {
+    loadChangeDetail([uen]).then(() => {
+      const still = document.getElementById('chg-popover');
+      if (still) still.firstChild.innerHTML = changeDetailHtml(uen, row, meta);
+    });
+  }
+}
+
+function changeDetailHtml(uen, row, meta) {
+  const list = changeDetail[uen];
+  const name = row ? esc(row.entity_name || '') : '';
+
+  let body;
+  if (!list) {
+    body = `<div style="font-size:11px;color:var(--text3)">Loading…</div>`;
+  } else if (!list.length) {
+    // Badge present but no changelog rows — worth surfacing rather than
+    // showing an empty box that looks like a rendering bug.
+    body = `<div style="font-size:11px;color:var(--amber)">
+              This company carries a badge but has no change records for
+              ${esc(currentChangeMonth)}. That is inconsistent — worth a look.
+            </div>`;
+  } else {
+    // Status first, then address fields in the order they read on an envelope.
+    const order = ['entity_status_description', 'block', 'street_name',
+                   'level_no', 'unit_no', 'building_name', 'postal_code'];
+    const sorted = [...list].sort((a, b) => {
+      const ia = order.indexOf(a.field), ib = order.indexOf(b.field);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+
+    body = sorted.map(c => {
+      const cm = CHANGE_BY_KEY[c.change_type];
+      // NEW_REGISTERED has no before/after — it is the absence of a previous
+      // row, so rendering "na → na" would be a lie.
+      if (!c.field) {
+        return `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
+                  <span class="chbadge ${cm ? cm.cls : 'ch-status'}">${esc(cm ? cm.label : c.change_type)}</span>
+                  <div style="font-size:11px;color:var(--text2);margin-top:8px;line-height:1.5">
+                    ${esc(cm ? cm.why : '')}
+                  </div>
+                </div>`;
+      }
+      const label = FIELD_LABELS[c.field] || c.field;
+      const before = (c.old_value === null || c.old_value === 'na' || c.old_value === '')
+        ? '<span style="color:var(--text3)">(none)</span>' : esc(c.old_value);
+      const after = (c.new_value === null || c.new_value === 'na' || c.new_value === '')
+        ? '<span style="color:var(--text3)">(none)</span>' : esc(c.new_value);
+      return `
+        <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span class="chbadge ${cm ? cm.cls : 'ch-status'}">${esc(cm ? cm.label : c.change_type)}</span>
+            <span style="font-size:11px;color:var(--text3)">${esc(label)}</span>
+          </div>
+          <div style="font-size:12px;line-height:1.6">
+            <span style="color:var(--text3);text-decoration:line-through">${before}</span>
+            <span style="color:var(--text3);margin:0 6px">&rarr;</span>
+            <span style="color:var(--text)">${after}</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  return `
+    <div style="display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:12px">
+      <div style="min-width:0">
+        <div style="font-size:14px;font-weight:600">What changed</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis">
+          ${name ? name + ' &middot; ' : ''}UEN ${esc(uen)}
+        </div>
+      </div>
+      <button onclick="document.getElementById('chg-popover').remove()"
+              style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1">&#10005;</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+      Comparing the ${esc(currentChangeMonth || '')} ACRA release against the one before it.
+    </div>
+    ${body}`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2806,6 +2976,14 @@ async function fetchPage(page) {
     // Pull in any saved enrichments that came back with these rows, so
     // previously-enriched companies show their contacts immediately.
     hydrateFromRows(data);
+    // Prefetch the per-field change detail for the badged rows on this page,
+    // in the background. One request for ~50 UENs costs the same as one for a
+    // single UEN, and someone who opens one badge usually opens several.
+    // Deliberately not awaited — the table must not wait on it.
+    loadChangeDetail(
+      data.filter(r => r.change_status && r.change_month === currentChangeMonth)
+          .map(r => r.uen)
+    );
     currentPage = page;
     renderTable();
     renderPagination();
