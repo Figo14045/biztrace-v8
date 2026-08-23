@@ -1,0 +1,16 @@
+# Local secrets. The offline scripts read TURSO_URL / TURSO_AUTH_TOKEN /
+# TURSO_WRITE_TOKEN from here; Netlify reads its own copies at deploy time.
+# This file must never be committed.
+.env
+.env.*
+!.env.example
+
+node_modules/
+
+# ACRA monthly releases — hundreds of MB of CSVs, kept outside the repo.
+data/
+*.csv
+
+# Scratch output from earlier debugging sessions.
+response.txt
+test.json
