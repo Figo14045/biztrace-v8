@@ -65,7 +65,7 @@ const ENRICHMENT_FIELDS = [
   'email_source_url', 'phone_source_url',
   'email_source', 'email_verdict', 'email_domain_match',
   'engine', 'model_used', 'outcome',
-  'approval', 'approved_at',
+  'approval', 'approved_at', 'exported_at',
   'enriched_at', 'first_enriched_at', 'enrichment_count',
 ];
 
@@ -201,8 +201,30 @@ function buildOrGroup(subFilters, qualify) {
 function buildOrderBy(sort, qualify) {
   if (!sort || !sort.length) return '';
   const parts = sort.map(s => {
-    if (!ALLOWED_COLUMNS.has(s.field)) throw new Error(`Unknown sort column: ${s.field}`);
     const dir = (s.dir || 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    // Sorting on an ENRICHMENT column, written as "enr_<field>" to match the
+    // prefix those columns come back under. Needed so the review queue can
+    // order by when a record was enriched.
+    //
+    // This matters more than it looks. The queue is capped at 500 rows, so
+    // the ORDER BY decides WHICH 500 come back — sorting by company name
+    // returned the alphabetically-first 500 and silently hid the newest work
+    // once the table outgrew the cap. Sorting client-side cannot fix that,
+    // because the wrong rows have already been chosen by then.
+    //
+    // Allowlisted against ENRICHMENT_FIELDS exactly as company columns are
+    // against ALLOWED_COLUMNS, so this widens what can be sorted, not what
+    // can be injected.
+    if (s.field && s.field.startsWith('enr_')) {
+      const field = s.field.slice(4);
+      if (!ENRICHMENT_FIELDS.includes(field)) {
+        throw new Error(`Unknown enrichment sort column: ${s.field}`);
+      }
+      return `${ENRICH_ALIAS}."${field}" ${dir} NULLS LAST`;
+    }
+
+    if (!ALLOWED_COLUMNS.has(s.field)) throw new Error(`Unknown sort column: ${s.field}`);
     // SQLite NULLS LAST equivalent: standard SQL works in modern SQLite
     return `${quoteCol(s.field, qualify)} ${dir} NULLS LAST`;
   });

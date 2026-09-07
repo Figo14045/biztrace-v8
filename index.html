@@ -55,6 +55,23 @@
   border-bottom:1px solid var(--border); background:var(--surface);
 }
 .qstat { font-family:var(--mono); font-size:10px; color:var(--text3); letter-spacing:0.08em; }
+/* Queue bar toggles. Small and quiet — they change what the list shows, they
+   are not primary actions. */
+.qtoggle {
+  display:flex; align-items:center; gap:5px; cursor:pointer;
+  font-family:var(--mono); font-size:10px; color:var(--text3);
+  letter-spacing:0.04em; white-space:nowrap;
+}
+.qtoggle:hover { color:var(--text2); }
+.qtoggle input { accent-color:var(--accent); cursor:pointer; margin:0; }
+/* When a result was found, and whether it has already been handed out. */
+.qwhen { font-family:var(--mono); font-size:10px; color:var(--text3); }
+.qexported {
+  display:inline-block; margin-left:8px; padding:1px 6px; border-radius:3px;
+  font-family:var(--mono); font-size:9px; letter-spacing:0.05em;
+  background:var(--surface2); color:var(--text3); border:1px solid var(--border2);
+  cursor:default;
+}
 .qnum { font-size:17px; color:var(--text); margin-right:6px; font-weight:600; }
 .qnum.ok { color:var(--green); } .qnum.no { color:var(--text3); }
 .qbtn {
@@ -993,6 +1010,14 @@ body.show-advanced .advanced-only { display: block; }
     <div class="qstat"><span class="qnum ok" id="q-approved">0</span> Approved</div>
     <div class="qstat"><span class="qnum no" id="q-rejected">0</span> Rejected</div>
     <div class="spacer"></div>
+    <label class="qtoggle" title="Approved and rejected records stay reachable so a decision can be undone — they are just out of the way by default.">
+      <input type="checkbox" id="q-show-decided" onchange="setQueueScope(this.checked)">
+      Show decided
+    </label>
+    <label class="qtoggle" title="Re-include results that have already been exported. Off by default so each export gives you only what nobody has taken yet.">
+      <input type="checkbox" id="q-include-exported">
+      Include already exported
+    </label>
     <button class="qbtn ghost" onclick="setView('home')">&larr; Back to Home</button>
     <button class="qbtn" onclick="exportApproved()">Export approved</button>
   </div>
@@ -3600,6 +3625,11 @@ function hydrateEnrichment(row) {
     source: row.enr_engine || 'saved',
     model_used: row.enr_model_used || null,
     approval: row.enr_approval || 'pending',
+    approved_at: row.enr_approved_at || null,
+    // NULL means this result has never gone out in a CSV export. "Approved"
+    // and "already taken" are different states, and treating them as one is
+    // what made every export repeat the previous day's work.
+    exported_at: row.enr_exported_at || null,
     enriched_at: row.enr_enriched_at,
     first_enriched_at: row.enr_first_enriched_at || row.enr_enriched_at,
     enrichment_count: row.enr_enrichment_count || 1,
@@ -4035,7 +4065,14 @@ async function loadQueue() {
         // approved/rejected counts too, and Salwa can click an approved card to
         // undo it. Capped because this is a review list, not a browse view.
         enriched_filter: 'enriched',
-        sort: [{ field: 'entity_name', dir: 'asc' }],
+        // Newest first, not alphabetical. This is not cosmetic: the queue is
+        // capped at QUEUE_LIMIT rows, so the sort decides WHICH rows come
+        // back. Ordering by company name returned the alphabetically-first
+        // 500 and quietly hid the newest work once the table outgrew the cap
+        // — which is exactly the "I can't tell new from old" problem Daphne
+        // hit. Sorting in the browser cannot fix it, because by then the
+        // wrong rows have already been chosen.
+        sort: [{ field: 'enr_enriched_at', dir: 'desc' }],
         limit: QUEUE_LIMIT,
         offset: 0,
         include_count: true
@@ -4060,12 +4097,42 @@ async function loadQueue() {
   }
 }
 
+// Whether the queue shows only work still awaiting a decision (the default)
+// or everything including approved and rejected records.
+//
+// Defaulting to pending is the fix for a real complaint: the queue was
+// showing every enriched record ever, so yesterday's finished work sat mixed
+// in with today's. Decided records are one checkbox away rather than gone —
+// undoing an approval still has to be possible.
+let queueShowDecided = false;
+
+function setQueueScope(showDecided) {
+  queueShowDecided = !!showDecided;
+  renderQueue();
+}
+
 function queueRows() {
   // Backed by the queue's own query (queueData), so it is independent of
   // whatever is currently searched on Home. Falls back to the on-screen
   // results if the queue has not loaded yet.
   const source = queueData.length ? queueData : (allResults || []);
-  return source.filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
+  const all = source.filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
+  if (queueShowDecided) return all;
+  // 'queued' rows are still waiting to be enriched, so they are pending work
+  // too and belong in the default view.
+  return all.filter(r => ['pending', 'queued'].includes(enrichData[r.uen].approval));
+}
+
+// Dates in Singapore time, matching the Enriched column on Home. A queue card
+// without a date was the other half of "I can't tell which is new".
+function qWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('en-SG', {
+    timeZone: 'Asia/Singapore', day: '2-digit', month: 'short',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
 }
 
 function updateQueueCount() {
@@ -4115,21 +4182,40 @@ function qFieldHtml(label, value, conf, sourceUrl, why) {
 function renderQueue() {
   const list = document.getElementById('queue-list');
   const rows = queueRows();
+
+  // Counts come from EVERY record the queue knows about, not from the rows
+  // currently displayed. Now that the default view hides decided work, taking
+  // the counts from the visible subset would report zero approved and zero
+  // rejected — which is exactly the number a reviewer needs to see.
+  const everything = (queueData.length ? queueData : (allResults || []))
+    .filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
+  let pending = 0, approved = 0, rejected = 0, waiting = 0;
+  for (const r of everything) {
+    const a = enrichData[r.uen].approval;
+    if (a === 'approved') approved++;
+    else if (a === 'rejected') rejected++;
+    else if (a === 'pending') pending++;
+    else if (a === 'queued') waiting++;
+  }
+  document.getElementById('q-pending').textContent = pending + waiting;
+  document.getElementById('q-approved').textContent = approved;
+  document.getElementById('q-rejected').textContent = rejected;
+
   if (!rows.length) {
-    list.innerHTML = `<div class="qempty">Nothing to review yet.<br>Select companies on Home and run enrichment.</div>`;
-    document.getElementById('q-pending').textContent = '0';
-    document.getElementById('q-approved').textContent = '0';
-    document.getElementById('q-rejected').textContent = '0';
+    // Distinguish "nothing here at all" from "nothing left to decide" — the
+    // second is a good outcome, and telling someone who has just cleared the
+    // queue to go and run an enrichment reads like the app lost their work.
+    const decided = approved + rejected;
+    list.innerHTML = decided && !queueShowDecided
+      ? `<div class="qempty">All caught up — nothing waiting for a decision.<br>
+           ${decided.toLocaleString()} decided record${decided === 1 ? '' : 's'} are hidden;
+           tick &ldquo;Show decided&rdquo; above to see them.</div>`
+      : `<div class="qempty">Nothing to review yet.<br>Select companies on Home and run enrichment.</div>`;
     return;
   }
 
-  let pending = 0, approved = 0, rejected = 0, waiting = 0;
   const cards = rows.map(row => {
     const e = enrichData[row.uen];
-    if (e.approval === 'approved') approved++;
-    else if (e.approval === 'rejected') rejected++;
-    else if (e.approval === 'pending') pending++;
-    else if (e.approval === 'queued') waiting++;
 
     // Still waiting its turn — show it, but there is nothing to decide yet.
     if (e.approval === 'queued') {
@@ -4168,7 +4254,11 @@ function renderQueue() {
           <div class="qmeta">
             ${esc(row.uen)} &middot; ${esc(row.entity_type_description || '')}
             ${row.primary_ssic_code ? ' &middot; SSIC ' + esc(row.primary_ssic_code) : ''}<br>
-            ${esc(row.full_address || '')}
+            ${esc(row.full_address || '')}<br>
+            <span class="qwhen">Enriched ${esc(qWhen(e.enriched_at)) || 'date unknown'}</span>
+            ${e.exported_at
+              ? `<span class="qexported" title="Already included in a CSV export on ${esc(qWhen(e.exported_at))}. It will not appear in the next export unless you tick &ldquo;Include already exported&rdquo;.">Exported ${esc(qWhen(e.exported_at))}</span>`
+              : ''}
           </div>
           ${addrWarn}
         </div>
@@ -4186,14 +4276,35 @@ function renderQueue() {
   }).join('');
 
   list.innerHTML = cards;
-  document.getElementById('q-pending').textContent = pending + waiting;
-  document.getElementById('q-approved').textContent = approved;
-  document.getElementById('q-rejected').textContent = rejected;
+  // Counters are written above, from the full record set rather than from
+  // the rows rendered here.
 }
 
-function exportApproved() {
-  const rows = queueRows().filter(r => enrichData[r.uen].approval === 'approved');
-  if (!rows.length) { showToast('Nothing approved yet'); return; }
+async function exportApproved() {
+  const includeExported = document.getElementById('q-include-exported')?.checked;
+
+  // Deliberately NOT queueRows(): that is filtered to pending by default, and
+  // an export of approved records must see approved ones regardless of what
+  // the view is currently showing.
+  const source = queueData.length ? queueData : (allResults || []);
+  const approved = source.filter(r =>
+    enrichData[r.uen] && enrichData[r.uen].approval === 'approved');
+
+  // The fix for Daphne's report: by default hand out only what nobody has
+  // taken yet. Previously this exported every approved record ever, so each
+  // export repeated the whole of the previous day's work.
+  const rows = includeExported
+    ? approved
+    : approved.filter(r => !enrichData[r.uen].exported_at);
+
+  if (!rows.length) {
+    const already = approved.length;
+    showToast(already
+      ? `Nothing new — all ${already} approved records have already been exported. Tick "Include already exported" to download them again.`
+      : 'Nothing approved yet');
+    return;
+  }
+
   const out = rows.map(r => {
     const e = enrichData[r.uen];
     return {
@@ -4206,11 +4317,55 @@ function exportApproved() {
       contact_confidence: e.contact_confidence || '',
       email_source_url: e.email_source_url || '',
       phone_source_url: e.phone_source_url || '',
-      approved: 'yes'
+      approved: 'yes',
+      // Carried into the CSV so a row can still be traced back after it has
+      // been merged into a spreadsheet or uploaded to the outreach tool.
+      enriched_at: e.enriched_at || '',
+      previously_exported_at: e.exported_at || ''
     };
   });
-  downloadCSV(out, 'biztrace_approved.csv');
+
+  // Name the file by date so successive exports do not overwrite each other
+  // in the Downloads folder — another way the old and new used to blur.
+  const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  downloadCSV(out, `biztrace_approved_${stamp}.csv`);
   showToast(`Exported ${out.length} approved`);
+
+  // Record what went out, so the next export can skip it. Done AFTER the file
+  // is handed over: if the download fails the rows stay unexported and can be
+  // taken again, which is the safer way round to fail.
+  await markExported(rows.map(r => r.uen));
+}
+
+// Stamp exported rows through the one write path. Chunked to stay inside the
+// function's 200-record cap, and failures are surfaced rather than swallowed:
+// if this does not land, the next export will repeat these rows, which is the
+// exact problem being fixed.
+async function markExported(uens) {
+  if (!uens.length) return;
+  const nowIso = new Date().toISOString();
+
+  try {
+    for (let i = 0; i < uens.length; i += 200) {
+      const batch = uens.slice(i, i + 200);
+      const r = await fetch('/.netlify/functions/enrich-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'exported', records: batch.map(uen => ({ uen })) })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || `save proxy ${r.status}`);
+    }
+
+    // Update in memory too, so the queue reflects it without a reload.
+    for (const uen of uens) {
+      if (enrichData[uen]) enrichData[uen].exported_at = nowIso;
+    }
+    renderQueue();
+  } catch (e) {
+    console.warn('Could not record the export:', e.message);
+    showToast('Exported, but could not record it — these rows may appear in the next export');
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

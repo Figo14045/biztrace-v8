@@ -1,0 +1,45 @@
+-- ══════════════════════════════════════════════════════════════════════════
+-- BizTrace — migration 007: record when an enrichment result was exported
+--
+-- ── The problem ──────────────────────────────────────────────────────────
+-- Reported by Daphne: every export from the Suggestion Queue includes the
+-- results she exported the day before, mixed in with the new ones, and there
+-- is no way to tell which is which.
+--
+-- She is right, and it is a design gap rather than a fault in the code. The
+-- queue was deliberately made global so the three of them can see each
+-- other's pending work across sessions and devices — that part is working as
+-- intended. What it never had was any memory of what had already been TAKEN.
+-- "Approved" and "already exported" are different states, and the export was
+-- treating them as the same one.
+--
+-- ── Why a column rather than a date filter ───────────────────────────────
+-- Filtering by approved_at (which already exists) would nearly work, and
+-- needs no migration. But it answers a subtly different question. If Daphne
+-- exports at 3pm and approves ten more records at 4pm, "approved today" hands
+-- her the 3pm rows a second time. Only recording the export itself answers
+-- "what have I not taken yet".
+--
+-- It also has to be stored server-side rather than in the browser. The queue
+-- is shared: Daphne exporting a batch must mean Salwa does not export it
+-- again, and that cannot work if the record lives in one person's browser.
+-- This is the same reasoning that made the queue itself database-backed.
+--
+-- ── Behaviour ────────────────────────────────────────────────────────────
+-- NULL means never exported. The export defaults to approved rows with NULL
+-- here, and stamps them on the way out. A checkbox in the queue re-includes
+-- already-exported rows when someone genuinely needs to re-download a batch.
+--
+-- Nothing is destroyed and nothing is hidden — a row that has been exported
+-- is still visible, still approved, and still shows in the queue with a
+-- marker saying when it went out.
+--
+-- No index: enrichments is a small table (one row per company we have looked
+-- up, currently in the low thousands) and the queue query already drives from
+-- it. Worth revisiting if it passes a hundred thousand rows.
+--
+-- ALTER TABLE ADD COLUMN has no IF NOT EXISTS form in SQLite; migrate.js
+-- treats "duplicate column name" as already-applied, so re-running is safe.
+-- ══════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE enrichments ADD COLUMN exported_at TEXT;

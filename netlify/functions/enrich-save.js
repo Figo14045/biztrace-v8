@@ -165,6 +165,24 @@ function buildApproveStatement(rec, nowIso) {
   };
 }
 
+// Export-only update. Stamps when a row was handed out in a CSV export, so
+// the next export can default to "what nobody has taken yet".
+//
+// Like the approval update, it deliberately touches one column and nothing
+// else: exporting a record must not rewrite its contact data, change its
+// approval state, or inflate enrichment_count.
+//
+// Re-exporting an already-exported row overwrites the timestamp rather than
+// preserving the first one. The question this needs to answer is "when did
+// this last go out", which is what someone chasing a missing row in our
+// outreach tool actually needs to know.
+function buildExportedStatement(rec, nowIso) {
+  return {
+    sql: `UPDATE ${TABLE} SET exported_at = ? WHERE uen = ?`,
+    args: [nowIso, rec.uen]
+  };
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
@@ -192,7 +210,10 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ ok: false, error: 'Invalid JSON body' }) };
   }
 
-  const action = req.action === 'approve' ? 'approve' : 'save';
+  // Allowlisted rather than passed through: an unrecognised action falls back
+  // to 'save', which is the only one that validates its whole payload.
+  const ACTIONS = new Set(['approve', 'exported', 'save']);
+  const action = ACTIONS.has(req.action) ? req.action : 'save';
   const records = Array.isArray(req.records) ? req.records : [];
 
   if (!records.length) {
@@ -214,11 +235,11 @@ exports.handler = async function (event) {
 
   let statements;
   try {
-    statements = valid.map(rec =>
-      action === 'approve'
-        ? buildApproveStatement(rec, nowIso)
-        : buildSaveStatement(rec, nowIso)
-    );
+    statements = valid.map(rec => {
+      if (action === 'approve')  return buildApproveStatement(rec, nowIso);
+      if (action === 'exported') return buildExportedStatement(rec, nowIso);
+      return buildSaveStatement(rec, nowIso);
+    });
   } catch (e) {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ ok: false, error: `Bad record: ${e.message}` }) };
   }
