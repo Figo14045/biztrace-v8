@@ -4169,10 +4169,48 @@ function setView(v) {
   // therefore an action, not a view; see showEnrichedRecords().
   if (v === 'enriched') { showEnrichedRecords(); return; }
 
+  // Home means the unfiltered starting point, so clicking it must release the
+  // preset filters — not just show the layout.
+  //
+  // This was a real bug: because Enriched Records IS the home table with the
+  // enrichment filter pinned, "Home" hid the queue and changed nothing else.
+  // Same rows, same highlighted tab, so it looked like the button was dead.
+  // Only clearing the sidebar filter by hand appeared to work.
+  //
+  // Deliberately narrow: it releases the two PRESET filters (enrichment
+  // status and change type) and nothing else. A postal code or date range
+  // someone typed into the sidebar is their search, not a preset, and going
+  // Home should not throw it away.
+  let presetsCleared = false;
+  if (v === 'home') {
+    if (typeof enrichedFilterMode !== 'undefined' && enrichedFilterMode !== 'all') {
+      enrichedFilterMode = 'all';
+      const sel = document.getElementById('f-enriched'); if (sel) sel.value = 'all';
+      presetsCleared = true;
+    }
+    if (typeof changeFilterMode !== 'undefined' && changeFilterMode !== 'any') {
+      changeFilterMode = 'any';
+      const sel = document.getElementById('f-change'); if (sel) sel.value = 'any';
+      presetsCleared = true;
+    }
+  }
+
   currentView = v;
   document.getElementById('layout').hidden = (v !== 'home');
   document.getElementById('queueView').hidden = (v !== 'queue');
   refreshNavActive();
+  if (typeof refreshEnrichedTools === 'function') refreshEnrichedTools();
+
+  // Only re-query when something actually changed. Clicking Home from Home
+  // should not cost a round trip.
+  if (presetsCleared) {
+    currentPage = 1;
+    selected.clear();
+    lastFallbackTier = null;
+    updateSelectedUI();
+    fetchPage(1);
+  }
+
   if (v === 'queue') {
     // Refresh from the database each time the tab opens, so a teammate's
     // decisions and any enrichment done elsewhere are reflected.
