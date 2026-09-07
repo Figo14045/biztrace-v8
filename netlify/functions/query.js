@@ -398,8 +398,30 @@ async function runQuery(req) {
                         CHANGE_TYPES.includes(req.change_filter))
     ? req.change_filter : 'any';
 
+  // Enrichment date window, used by the Enriched Records view so the team can
+  // ask "what did we look up today / last week" rather than scrolling.
+  // Inclusive of `from`, EXCLUSIVE of `to` — the caller passes the day after
+  // the last day it wants, which avoids the classic bug where a range ending
+  // "today" silently drops everything enriched after midnight this morning.
+  //
+  // Validated as YYYY-MM-DD and compared as text: enriched_at is stored as an
+  // ISO timestamp, and ISO strings sort correctly as text, so a plain string
+  // comparison is both correct and index-friendly.
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const enrichedFrom = DATE_RE.test(req.enriched_from || '') ? req.enriched_from : null;
+  const enrichedTo   = DATE_RE.test(req.enriched_to   || '') ? req.enriched_to   : null;
+
+  // 'any' | 'not_exported' | 'exported'
+  // Records whose results have already been handed out in a CSV. Kept as a
+  // filter rather than a default, so it answers "give me only what nobody has
+  // taken" when that is what someone wants, without silently hiding rows.
+  const exportedFilter = ['not_exported', 'exported'].includes(req.exported_filter)
+    ? req.exported_filter : 'any';
+
   // The join is required whenever we return enrichment data OR filter on it.
-  const useJoin = includeEnrichment || enrichedFilter !== 'all' || approvalFilter !== 'any';
+  const useJoin = includeEnrichment || enrichedFilter !== 'all' ||
+                  approvalFilter !== 'any' || exportedFilter !== 'any' ||
+                  !!enrichedFrom || !!enrichedTo;
 
   let selectClause = buildSelect(fields, useJoin);
   if (includeEnrichment) selectClause += ', ' + buildEnrichmentSelect();
@@ -432,6 +454,24 @@ async function runQuery(req) {
     // Parameterised, and implies the row exists, so no extra NULL check needed.
     wherePieces.push(`${ENRICH_ALIAS}."approval" = ?`);
     whereArgs.push(approvalFilter);
+  }
+
+  // Enrichment date window. Each of these also implies the enrichment row
+  // exists, so they drive the join from the small table like the others.
+  if (enrichedFrom) {
+    wherePieces.push(`${ENRICH_ALIAS}."enriched_at" >= ?`);
+    whereArgs.push(enrichedFrom);
+  }
+  if (enrichedTo) {
+    // Exclusive upper bound — see the note where these are parsed.
+    wherePieces.push(`${ENRICH_ALIAS}."enriched_at" < ?`);
+    whereArgs.push(enrichedTo);
+  }
+
+  if (exportedFilter === 'not_exported') {
+    wherePieces.push(`${ENRICH_ALIAS}."exported_at" IS NULL`);
+  } else if (exportedFilter === 'exported') {
+    wherePieces.push(`${ENRICH_ALIAS}."exported_at" IS NOT NULL`);
   }
 
   // Change filter. Always pinned to the CURRENT release, resolved server-side
@@ -487,7 +527,14 @@ async function runQuery(req) {
   // timeout. When that is the ONLY filter we avoid it entirely — count the
   // small enrichments table instead and let the frontend subtract from the
   // table total it already knows.
-  const otherFilters = filters.length > 0 || orGroups.length > 0 || approvalFilter !== 'any';
+  // Anything narrowing the result set beyond the plain enrichment-presence
+  // filter. The cheap COUNT shortcut below answers "how many enriched rows
+  // are there" with COUNT(*) FROM enrichments, which is only the right answer
+  // when nothing else is narrowing it — so every new filter must be listed
+  // here or the row count silently reports the whole table.
+  const otherFilters = filters.length > 0 || orGroups.length > 0 ||
+                       approvalFilter !== 'any' || exportedFilter !== 'any' ||
+                       !!enrichedFrom || !!enrichedTo || changeFilter !== 'any';
 
   // Counting across the 2M-row companies table is what used to time out, so
   // both enrichment-only cases are answered from the small enrichments table:

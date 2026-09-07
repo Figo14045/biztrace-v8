@@ -976,6 +976,36 @@ body.show-advanced .advanced-only { display: block; }
 .chbadge-btn { cursor:pointer; }
 .chbadge-btn:hover { filter:brightness(1.35); }
 
+/* ── Enriched Records toolbar controls ───────────────────────────────────
+   Compact by design: they live in the results bar next to the row count, so
+   they must not crowd out the count itself. Hidden entirely on Home. */
+#enriched-tools { display:flex; align-items:center; gap:6px; margin-left:14px; flex-wrap:wrap; }
+#enriched-tools[hidden] { display:none !important; }
+.et-label { font-family:var(--mono); font-size:10px; color:var(--text3); letter-spacing:0.08em; text-transform:uppercase; }
+.et-dash  { color:var(--text3); font-size:11px; }
+.et-date, .et-sel {
+  background:var(--surface2); color:var(--text); border:1px solid var(--border2);
+  border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:10px;
+}
+.et-date { color-scheme:dark; }
+.et-quick { padding:3px 8px !important; font-size:10px !important; }
+.et-check {
+  display:flex; align-items:center; gap:4px; cursor:pointer;
+  font-family:var(--mono); font-size:10px; color:var(--text3); white-space:nowrap;
+}
+.et-check:hover { color:var(--text2); }
+.et-check input { accent-color:var(--accent); cursor:pointer; margin:0; }
+
+/* Approval control in the table. Colour follows the state so a column of
+   these is scannable without reading every one. */
+.apsel {
+  background:var(--surface2); color:var(--text2); border:1px solid var(--border2);
+  border-radius:4px; padding:2px 4px; font-family:var(--mono); font-size:10px; cursor:pointer;
+}
+.apsel.ap-approved { color:var(--green);  border-color:rgba(34,197,94,0.4); }
+.apsel.ap-rejected { color:var(--text3);  border-color:var(--border2); opacity:0.75; }
+.apsel.ap-pending  { color:var(--amber);  border-color:rgba(245,158,11,0.4); }
+
 /* Scrollbar global */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -1007,19 +1037,10 @@ body.show-advanced .advanced-only { display: block; }
 <div id="queueView" hidden>
   <div id="queue-bar">
     <div class="qstat"><span class="qnum" id="q-pending">0</span> Pending</div>
-    <div class="qstat"><span class="qnum ok" id="q-approved">0</span> Approved</div>
-    <div class="qstat"><span class="qnum no" id="q-rejected">0</span> Rejected</div>
+    <div class="qstat" style="color:var(--text3)">Decisions live in Enriched Records</div>
     <div class="spacer"></div>
-    <label class="qtoggle" title="Approved and rejected records stay reachable so a decision can be undone — they are just out of the way by default.">
-      <input type="checkbox" id="q-show-decided" onchange="setQueueScope(this.checked)">
-      Show decided
-    </label>
-    <label class="qtoggle" title="Re-include results that have already been exported. Off by default so each export gives you only what nobody has taken yet.">
-      <input type="checkbox" id="q-include-exported">
-      Include already exported
-    </label>
     <button class="qbtn ghost" onclick="setView('home')">&larr; Back to Home</button>
-    <button class="qbtn" onclick="exportApproved()">Export approved</button>
+    <button class="qbtn" onclick="setView('enriched')">All enriched records &rarr;</button>
   </div>
   <div id="queue-list"></div>
 </div>
@@ -1311,6 +1332,31 @@ body.show-advanced .advanced-only { display: block; }
     <div id="toolbar">
       <div id="result-count"><strong id="match-count">0</strong> companies match</div>
       <span id="selected-count">✓ <span id="sel-num">0</span> selected</span>
+
+      <!-- Enriched Records controls. Hidden on Home: filtering by when a
+           company was looked up is meaningless for companies nobody has
+           looked up, and an always-visible control that does nothing most of
+           the time is worse than no control. -->
+      <div id="enriched-tools" hidden>
+        <span class="et-label">Enriched</span>
+        <input type="date" class="et-date" id="et-from" onchange="applyEnrichedDates()" title="From this date (inclusive)">
+        <span class="et-dash">&ndash;</span>
+        <input type="date" class="et-date" id="et-to" onchange="applyEnrichedDates()" title="To this date (inclusive)">
+        <button class="tb-btn et-quick" onclick="setEnrichedRange('today')">Today</button>
+        <button class="tb-btn et-quick" onclick="setEnrichedRange('7d')">7 days</button>
+        <button class="tb-btn et-quick" onclick="setEnrichedRange('all')" title="Clear the date range">All</button>
+        <select class="et-sel" id="et-approval" onchange="setEnrichedApproval(this.value)" title="Approval state">
+          <option value="any">Any decision</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <label class="et-check" title="Hide results that have already gone out in a CSV export. Useful when you export more than once in a day and do not want the same rows twice.">
+          <input type="checkbox" id="et-unexported" onchange="setEnrichedExported(this.checked)">
+          Not yet exported
+        </label>
+      </div>
+
       <div class="toolbar-spacer"></div>
       <button class="tb-btn" onclick="selectPageAll()">☑ Select page</button>
       <button class="tb-btn" id="enrich-btn" disabled onclick="openEnrichPanel()">🔍 Enrich Selected (<span id="enrich-count">0</span>)</button>
@@ -1350,6 +1396,10 @@ body.show-advanced .advanced-only { display: block; }
                  full-table work. Filtering happens in the sidebar instead,
                  where it is pinned to the current release and index-backed. -->
             <th title="What changed for this company in the current ACRA release">Change</th>
+            <!-- The queue drops a card the moment it is decided, so this is
+                 where a decision gets changed afterwards. Without it a
+                 misclick in the queue would be unrecoverable. -->
+            <th title="Approve or reject an enrichment result. Changes here are saved immediately.">Approval</th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
@@ -1541,6 +1591,16 @@ async function tbQuery(params, select, page = 1, retryCount = 0) {
   // release itself, so a stale tab cannot filter on last month's badges.
   if (typeof changeFilterMode !== 'undefined' && changeFilterMode !== 'any') {
     turso.change_filter = changeFilterMode;
+  }
+  // Enriched Records date window / decision / export-state. Only meaningful
+  // alongside the enrichment join, which enriched_filter already forces.
+  if (typeof enrichedFrom !== 'undefined' && enrichedFrom) turso.enriched_from = enrichedFrom;
+  if (typeof enrichedTo   !== 'undefined' && enrichedTo)   turso.enriched_to   = exclusiveEnd(enrichedTo);
+  if (typeof enrichedApproval !== 'undefined' && enrichedApproval !== 'any') {
+    turso.approval_filter = enrichedApproval;
+  }
+  if (typeof enrichedUnexportedOnly !== 'undefined' && enrichedUnexportedOnly) {
+    turso.exported_filter = 'not_exported';
   }
 
   const r = await fetch(PROXY_URL, {
@@ -1768,6 +1828,81 @@ function renderChangeFilter() {
   sel.value = changeFilterMode;
 }
 
+// ── Enriched Records controls ────────────────────────────────────────────
+// The Suggestion Queue is a decision inbox and empties as it is worked. These
+// filters are the other half of that split: everything ever enriched lives in
+// the Enriched Records table, found by WHEN rather than by scrolling.
+//
+// All three are applied in SQL against the enrichments table, which is small
+// and drives the join, so narrowing here is cheap.
+let enrichedFrom = null;        // 'YYYY-MM-DD', inclusive
+let enrichedTo   = null;        // 'YYYY-MM-DD', inclusive (converted below)
+let enrichedApproval = 'any';   // any | pending | approved | rejected
+let enrichedUnexportedOnly = false;
+
+// Today in Singapore, not in the browser's timezone. Someone working at 8am
+// in Kuala Lumpur and a server storing UTC disagree about what "today" means,
+// and the sales team means Singapore.
+function sgToday() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+}
+
+function sgDaysAgo(n) {
+  const d = new Date(Date.now() - n * 86400000);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+}
+
+// The proxy takes an EXCLUSIVE upper bound, so a range ending "today" has to
+// be sent as tomorrow — otherwise everything enriched after midnight this
+// morning silently falls outside it, which is the most confusing possible
+// failure for a filter called "Today".
+function exclusiveEnd(day) {
+  if (!day) return null;
+  const d = new Date(day + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function setEnrichedRange(preset) {
+  if (preset === 'today')      { enrichedFrom = sgToday();   enrichedTo = sgToday(); }
+  else if (preset === '7d')    { enrichedFrom = sgDaysAgo(6); enrichedTo = sgToday(); }
+  else                         { enrichedFrom = null;         enrichedTo = null; }
+
+  document.getElementById('et-from').value = enrichedFrom || '';
+  document.getElementById('et-to').value   = enrichedTo   || '';
+  rerunEnrichedQuery();
+}
+
+function applyEnrichedDates() {
+  enrichedFrom = document.getElementById('et-from').value || null;
+  enrichedTo   = document.getElementById('et-to').value   || null;
+  rerunEnrichedQuery();
+}
+
+function setEnrichedApproval(v) {
+  enrichedApproval = ['pending', 'approved', 'rejected'].includes(v) ? v : 'any';
+  rerunEnrichedQuery();
+}
+
+function setEnrichedExported(on) {
+  enrichedUnexportedOnly = !!on;
+  rerunEnrichedQuery();
+}
+
+function rerunEnrichedQuery() {
+  currentPage = 1;
+  selected.clear();
+  lastFallbackTier = null;
+  updateSelectedUI();
+  fetchPage(1);
+}
+
+// Show the controls only where they mean something.
+function refreshEnrichedTools() {
+  const el = document.getElementById('enriched-tools');
+  if (el) el.hidden = (enrichedFilterMode !== 'enriched');
+}
+
 // Applied in SQL, so changing it re-runs the query from page 1 — same shape
 // as the Enrichment Status filter.
 function setChangeFilter(mode) {
@@ -1801,6 +1936,45 @@ function renderChangeCell(row) {
          `onclick="showChangeDetail('${esc(row.uen)}')" ` +
          `title="${esc(label)} — ${esc(why)}\nClick for the full change list.">` +
          `${esc(label)}</span>`;
+}
+
+// Approval control for the main table. Only shown for companies that have
+// actually been enriched — there is nothing to approve otherwise.
+//
+// This is the undo path for the queue. A card leaves the inbox as soon as it
+// is decided, which is what makes the inbox an inbox; the cost is that
+// changing your mind has to happen somewhere, and this is it.
+function renderApprovalCell(uen, enr) {
+  if (!enr || !enr.persisted && !enr.approval) return '';
+  if (!enr.approval || enr.approval === 'queued') return '';
+
+  const states = [
+    ['pending',  'Pending'],
+    ['approved', 'Approved'],
+    ['rejected', 'Rejected'],
+  ];
+  const opts = states.map(([v, label]) =>
+    `<option value="${v}"${enr.approval === v ? ' selected' : ''}>${label}</option>`).join('');
+
+  return `<select class="apsel ap-${esc(enr.approval)}" onchange="setApprovalFromTable('${esc(uen)}', this.value)"
+                  title="Saved immediately">${opts}</select>`;
+}
+
+// Distinct from setApproval(), which toggles and is wired to the queue's
+// buttons. Here the value is chosen explicitly, so it is set rather than
+// toggled — picking "Approved" on an already-approved row must not silently
+// flip it back to pending.
+function setApprovalFromTable(uen, state) {
+  const e = enrichData[uen];
+  if (!e) return;
+  if (!['pending', 'approved', 'rejected'].includes(state)) return;
+
+  e.approval = state;
+  persistApproval(uen, state);
+  renderTable();
+  // A row moved back to pending belongs in the inbox again, so refresh the
+  // count rather than leaving it stale until the next page load.
+  loadQueue().then(() => { updateQueueCount(); if (currentView === 'queue') renderQueue(); });
 }
 
 // ── Change detail ────────────────────────────────────────────────────────
@@ -2905,6 +3079,7 @@ function setEnrichedFilter(mode) {
   lastFallbackTier = null;
   updateSelectedUI();
   refreshNavActive();  // the Enriched Records tab follows this select
+  refreshEnrichedTools();
   fetchPage(1);
 }
 
@@ -3322,6 +3497,7 @@ function renderTable() {
       <td>${renderContactCell(row.uen, enr)}</td>
       <td>${renderEnrichedCell(enr)}</td>
       <td>${renderChangeCell(row)}</td>
+      <td>${renderApprovalCell(row.uen, enr)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -3459,6 +3635,14 @@ async function exportCSV() {
     if (typeof changeFilterMode !== 'undefined' && changeFilterMode !== 'any') {
       turso.change_filter = changeFilterMode;
     }
+    if (typeof enrichedFrom !== 'undefined' && enrichedFrom) turso.enriched_from = enrichedFrom;
+    if (typeof enrichedTo   !== 'undefined' && enrichedTo)   turso.enriched_to   = exclusiveEnd(enrichedTo);
+    if (typeof enrichedApproval !== 'undefined' && enrichedApproval !== 'any') {
+      turso.approval_filter = enrichedApproval;
+    }
+    if (typeof enrichedUnexportedOnly !== 'undefined' && enrichedUnexportedOnly) {
+      turso.exported_filter = 'not_exported';
+    }
     const batchSize = 1000;
     let offset = 0;
     while (true) {
@@ -3525,8 +3709,17 @@ async function exportCSV() {
     };
   });
 
-  downloadCSV(enrichedRows, 'biztrace_export.csv');
+  const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  downloadCSV(enrichedRows, `biztrace_export_${stamp}.csv`);
   showToast(`Exported ${allRows.length.toLocaleString()} rows`);
+
+  // Record which enriched results just went out, so "Not yet exported" means
+  // something. Deliberately every enriched row in ANY export, not just those
+  // exported from Enriched Records: the honest question is "has this been
+  // handed to someone", and a row in a CSV has been, whichever screen the CSV
+  // came from. Done after the download so a failed export leaves rows
+  // unstamped and takeable again.
+  await markExported(allRows.map(r => r.uen).filter(uen => enrichData[uen]));
 }
 
 function exportEnrichedCSV() {
@@ -3955,6 +4148,20 @@ async function startEnrich() {
 let currentView = 'home';
 
 function setView(v) {
+  // Moving away from Enriched Records clears its date/decision filters.
+  // They are invisible outside that view, and an invisible filter quietly
+  // narrowing a search is the kind of bug nobody reports because it looks
+  // like the data is simply missing.
+  if (v !== 'enriched' && typeof enrichedFrom !== 'undefined' &&
+      (enrichedFrom || enrichedTo || enrichedApproval !== 'any' || enrichedUnexportedOnly)) {
+    enrichedFrom = null; enrichedTo = null;
+    enrichedApproval = 'any'; enrichedUnexportedOnly = false;
+    const f = document.getElementById('et-from'); if (f) f.value = '';
+    const t = document.getElementById('et-to');   if (t) t.value = '';
+    const a = document.getElementById('et-approval'); if (a) a.value = 'any';
+    const x = document.getElementById('et-unexported'); if (x) x.checked = false;
+  }
+
   // "Enriched Records" is not a third dataset — it is the home table with the
   // Enrichment Status filter pinned to "Enriched before" and everything else
   // cleared. Doing it this way means it inherits sorting, paging, column
@@ -4035,6 +4242,7 @@ async function showEnrichedRecords() {
 
   currentPage = 1;
   refreshNavActive();
+  refreshEnrichedTools();
   await fetchPage(1);
 }
 
@@ -4064,7 +4272,12 @@ async function loadQueue() {
         // Every enriched record, not just pending ones — the queue header shows
         // approved/rejected counts too, and Salwa can click an approved card to
         // undo it. Capped because this is a review list, not a browse view.
-        enriched_filter: 'enriched',
+        // Decision-only queue: ask the database for work still awaiting a
+        // decision rather than pulling every enriched record and filtering in
+        // the browser. Approved and rejected records live in Enriched
+        // Records, which is a table view built for browsing rather than a
+        // list that grows forever.
+        approval_filter: 'pending',
         // Newest first, not alphabetical. This is not cosmetic: the queue is
         // capped at QUEUE_LIMIT rows, so the sort decides WHICH rows come
         // back. Ordering by company name returned the alphabetically-first
@@ -4097,30 +4310,31 @@ async function loadQueue() {
   }
 }
 
-// Whether the queue shows only work still awaiting a decision (the default)
-// or everything including approved and rejected records.
+// The queue is a decision inbox: pending work only.
 //
-// Defaulting to pending is the fix for a real complaint: the queue was
-// showing every enriched record ever, so yesterday's finished work sat mixed
-// in with today's. Decided records are one checkbox away rather than gone —
-// undoing an approval still has to be possible.
-let queueShowDecided = false;
-
-function setQueueScope(showDecided) {
-  queueShowDecided = !!showDecided;
-  renderQueue();
-}
-
+// queueData already contains just the pending records (the server filters
+// them), so this mainly merges in rows that are mid-run. During an enrichment
+// pass a company is marked 'queued' locally before any result exists, and
+// those have no database row to have been filtered — without this they would
+// vanish from the queue while being worked on.
 function queueRows() {
-  // Backed by the queue's own query (queueData), so it is independent of
-  // whatever is currently searched on Home. Falls back to the on-screen
-  // results if the queue has not loaded yet.
-  const source = queueData.length ? queueData : (allResults || []);
-  const all = source.filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
-  if (queueShowDecided) return all;
-  // 'queued' rows are still waiting to be enriched, so they are pending work
-  // too and belong in the default view.
-  return all.filter(r => ['pending', 'queued'].includes(enrichData[r.uen].approval));
+  const seen = new Set();
+  const out = [];
+
+  for (const r of queueData) {
+    const e = enrichData[r.uen];
+    if (!e || !['pending', 'queued'].includes(e.approval)) continue;
+    seen.add(r.uen);
+    out.push(r);
+  }
+
+  for (const r of (allResults || [])) {
+    if (seen.has(r.uen)) continue;
+    const e = enrichData[r.uen];
+    if (e && ['pending', 'queued'].includes(e.approval)) out.push(r);
+  }
+
+  return out;
 }
 
 // Dates in Singapore time, matching the Enriched column on Home. A queue card
@@ -4148,6 +4362,15 @@ function setApproval(uen, state) {
   const e = enrichData[uen];
   if (!e) return;
   e.approval = (e.approval === state) ? 'pending' : state;   // click again to undo
+
+  // Decided work leaves the inbox straight away — that is the point of
+  // splitting the queue from the records. Dropping it from queueData rather
+  // than re-querying keeps the click instant. Changing a decision afterwards
+  // happens in Enriched Records, which has an Approval column for exactly
+  // that; nothing is lost, it just is not undoable from here.
+  if (e.approval === 'approved' || e.approval === 'rejected') {
+    queueData = queueData.filter(r => r.uen !== uen);
+  }
   // Persist the decision. Optimistic — the UI updates immediately and we only
   // surface a message if the write fails.
   persistApproval(uen, e.approval);
@@ -4183,34 +4406,16 @@ function renderQueue() {
   const list = document.getElementById('queue-list');
   const rows = queueRows();
 
-  // Counts come from EVERY record the queue knows about, not from the rows
-  // currently displayed. Now that the default view hides decided work, taking
-  // the counts from the visible subset would report zero approved and zero
-  // rejected — which is exactly the number a reviewer needs to see.
-  const everything = (queueData.length ? queueData : (allResults || []))
-    .filter(r => enrichData[r.uen] && enrichData[r.uen].approval);
-  let pending = 0, approved = 0, rejected = 0, waiting = 0;
-  for (const r of everything) {
-    const a = enrichData[r.uen].approval;
-    if (a === 'approved') approved++;
-    else if (a === 'rejected') rejected++;
-    else if (a === 'pending') pending++;
-    else if (a === 'queued') waiting++;
-  }
-  document.getElementById('q-pending').textContent = pending + waiting;
-  document.getElementById('q-approved').textContent = approved;
-  document.getElementById('q-rejected').textContent = rejected;
+  // The queue is pending-only now, so its count is simply what is in it.
+  // Approved and rejected totals moved to Enriched Records, where the records
+  // themselves live — a decision inbox that reports how much you have already
+  // decided is telling you about the wrong thing.
+  const pending = rows.length;
+  document.getElementById('q-pending').textContent = pending;
 
   if (!rows.length) {
-    // Distinguish "nothing here at all" from "nothing left to decide" — the
-    // second is a good outcome, and telling someone who has just cleared the
-    // queue to go and run an enrichment reads like the app lost their work.
-    const decided = approved + rejected;
-    list.innerHTML = decided && !queueShowDecided
-      ? `<div class="qempty">All caught up — nothing waiting for a decision.<br>
-           ${decided.toLocaleString()} decided record${decided === 1 ? '' : 's'} are hidden;
-           tick &ldquo;Show decided&rdquo; above to see them.</div>`
-      : `<div class="qempty">Nothing to review yet.<br>Select companies on Home and run enrichment.</div>`;
+    list.innerHTML = `<div class="qempty">All caught up &mdash; nothing waiting for a decision.<br>
+      Approved and rejected results are in <strong>Enriched Records</strong>.</div>`;
     return;
   }
 
@@ -4276,66 +4481,12 @@ function renderQueue() {
   }).join('');
 
   list.innerHTML = cards;
-  // Counters are written above, from the full record set rather than from
-  // the rows rendered here.
 }
 
-async function exportApproved() {
-  const includeExported = document.getElementById('q-include-exported')?.checked;
-
-  // Deliberately NOT queueRows(): that is filtered to pending by default, and
-  // an export of approved records must see approved ones regardless of what
-  // the view is currently showing.
-  const source = queueData.length ? queueData : (allResults || []);
-  const approved = source.filter(r =>
-    enrichData[r.uen] && enrichData[r.uen].approval === 'approved');
-
-  // The fix for Daphne's report: by default hand out only what nobody has
-  // taken yet. Previously this exported every approved record ever, so each
-  // export repeated the whole of the previous day's work.
-  const rows = includeExported
-    ? approved
-    : approved.filter(r => !enrichData[r.uen].exported_at);
-
-  if (!rows.length) {
-    const already = approved.length;
-    showToast(already
-      ? `Nothing new — all ${already} approved records have already been exported. Tick "Include already exported" to download them again.`
-      : 'Nothing approved yet');
-    return;
-  }
-
-  const out = rows.map(r => {
-    const e = enrichData[r.uen];
-    return {
-      uen: r.uen, entity_name: r.entity_name,
-      entity_type_description: r.entity_type_description || '',
-      primary_ssic_code: r.primary_ssic_code || '',
-      full_address: r.full_address || '',
-      website: e.website || '', email: e.email || '', phone: e.phone || '',
-      identity_confidence: e.identity_confidence || '',
-      contact_confidence: e.contact_confidence || '',
-      email_source_url: e.email_source_url || '',
-      phone_source_url: e.phone_source_url || '',
-      approved: 'yes',
-      // Carried into the CSV so a row can still be traced back after it has
-      // been merged into a spreadsheet or uploaded to the outreach tool.
-      enriched_at: e.enriched_at || '',
-      previously_exported_at: e.exported_at || ''
-    };
-  });
-
-  // Name the file by date so successive exports do not overwrite each other
-  // in the Downloads folder — another way the old and new used to blur.
-  const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
-  downloadCSV(out, `biztrace_approved_${stamp}.csv`);
-  showToast(`Exported ${out.length} approved`);
-
-  // Record what went out, so the next export can skip it. Done AFTER the file
-  // is handed over: if the download fails the rows stay unexported and can be
-  // taken again, which is the safer way round to fail.
-  await markExported(rows.map(r => r.uen));
-}
+// exportApproved() was removed when the queue became decision-only.
+// Exporting now happens from Enriched Records via the main Export CSV, which
+// carries the full company columns, the email-validation columns and the
+// change badge — none of which the queue's cut-down export ever included.
 
 // Stamp exported rows through the one write path. Chunked to stay inside the
 // function's 200-record cap, and failures are surfaced rather than swallowed:
