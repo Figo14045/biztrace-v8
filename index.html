@@ -1703,6 +1703,40 @@ let DB_TOTAL_COUNT = 0;  // full-table row count, captured at page load; used as
 let sortCol      = 'entity_name';
 let sortAsc      = true;
 let selected     = new Set();
+// uen → the row itself, for every uen in `selected`.
+//
+// `selected` survives paging correctly, but allResults only ever holds the
+// CURRENT page. Resolving selections against allResults therefore silently
+// dropped every row not on screen: selecting 1,609 across 17 pages and
+// clicking Enrich processed only the 9 on the last page, while the button
+// still said 1,609. The count was right and the work was not.
+//
+// Keeping the row when it is selected is the fix — by the time Enrich runs,
+// the page it came from is long gone. Always mutate the two together through
+// selectRow/deselectRow/clearSelection so they cannot drift apart.
+let selectedRows = new Map();
+
+function selectRow(row) {
+  if (!row || !row.uen) return;
+  selected.add(row.uen);
+  selectedRows.set(row.uen, row);
+}
+
+function deselectRow(uen) {
+  selected.delete(uen);
+  selectedRows.delete(uen);
+}
+
+function clearSelection() {
+  selected.clear();
+  selectedRows.clear();
+}
+
+// Every selected row, in selection order, regardless of which page it came
+// from. This is what enrichment and the preview panel must both work from.
+function selectedRowList() {
+  return [...selectedRows.values()];
+}
 let enrichData   = {};   // uen → {website, phone, email, badge}
 let enrichedFilterMode = 'all';  // all | enriched | not_enriched (sidebar filter)
 
@@ -1891,7 +1925,7 @@ function setEnrichedExported(on) {
 
 function rerunEnrichedQuery() {
   currentPage = 1;
-  selected.clear();
+  clearSelection();
   lastFallbackTier = null;
   updateSelectedUI();
   fetchPage(1);
@@ -1909,7 +1943,7 @@ function setChangeFilter(mode) {
   const valid = ['changed', ...CHANGE_META.map(c => c.key)];
   changeFilterMode = valid.includes(mode) ? mode : 'any';
   currentPage = 1;
-  selected.clear();
+  clearSelection();
   lastFallbackTier = null;
   updateSelectedUI();
   refreshNavActive();
@@ -3075,7 +3109,7 @@ const FALLBACK_TIER_KEEP = {
 function setEnrichedFilter(mode) {
   enrichedFilterMode = ['enriched', 'not_enriched'].includes(mode) ? mode : 'all';
   currentPage = 1;
-  selected.clear();
+  clearSelection();
   lastFallbackTier = null;
   updateSelectedUI();
   refreshNavActive();  // the Enriched Records tab follows this select
@@ -3085,7 +3119,7 @@ function setEnrichedFilter(mode) {
 
 async function applyFilters() {
   currentPage = 1;
-  selected.clear();
+  clearSelection();
   lastFallbackTier = null;  // reset so cascade re-runs on this fresh search
   updateSelectedUI();
   await fetchPage(1);
@@ -3562,8 +3596,10 @@ async function goPage(p) {
 // SELECTION
 // ══════════════════════════════════════════════════════════════
 function toggleRow(uen, cb) {
-  if (cb.checked) selected.add(uen);
-  else selected.delete(uen);
+  // Look the row up on the current page — a checkbox can only be clicked on
+  // a row that is on screen, so this always finds it.
+  if (cb.checked) selectRow((allResults || []).find(r => r.uen === uen));
+  else deselectRow(uen);
   const tr = cb.closest('tr');
   tr.classList.toggle('selected', cb.checked);
   updateSelectedUI();
@@ -3571,8 +3607,8 @@ function toggleRow(uen, cb) {
 
 function toggleSelectAll(cb) {
   allResults.forEach(r => {
-    if (cb.checked) selected.add(r.uen);
-    else selected.delete(r.uen);
+    if (cb.checked) selectRow(r);
+    else deselectRow(r.uen);
   });
   renderTable();
   document.getElementById('select-all-cb').checked = cb.checked;
@@ -3580,7 +3616,7 @@ function toggleSelectAll(cb) {
 }
 
 function selectPageAll() {
-  allResults.forEach(r => selected.add(r.uen));
+  allResults.forEach(selectRow);
   renderTable();
   document.getElementById('select-all-cb').checked = true;
   updateSelectedUI();
@@ -4011,7 +4047,8 @@ function openEnrichPanel() {
   const list = document.getElementById('enrich-list');
   list.innerHTML = '';
 
-  const selRows = allResults.filter(r => selected.has(r.uen));
+  // Every selected row across all pages — not just the page on screen.
+  const selRows = selectedRowList();
   selRows.forEach(r => {
     const enr = enrichData[r.uen] || {};
     const div = document.createElement('div');
@@ -4032,10 +4069,46 @@ function closeEnrichPanel() {
   document.getElementById('enrich-panel').classList.remove('visible');
 }
 
+// Above this many rows, confirm before starting an enrichment run. Low enough
+// that an accidental multi-page selection is caught, high enough that normal
+// day-to-day batches are not nagged about.
+const CONFIRM_ENRICH_ABOVE = 25;
+
 async function startEnrich() {
   const mode = getEnrichMode();
-  const selRows = allResults.filter(r => selected.has(r.uen));
+  // Every selected row across all pages. Resolving against allResults here is
+  // what made a multi-page selection enrich only the last page.
+  const selRows = selectedRowList();
   if (!selRows.length) { showToast('No rows selected'); return; }
+
+  // Confirm anything large before starting.
+  //
+  // Until now a multi-page selection quietly enriched only the last page, so
+  // a big run was never actually big. Now that it does what the button says,
+  // the cost and duration are real and worth seeing first: 1,600 companies is
+  // several hours and, on OpenRouter, roughly the price of lunch. Nobody
+  // should discover that after clicking.
+  if (selRows.length > CONFIRM_ENRICH_ABOVE) {
+    const lowMin  = Math.round(selRows.length * 5  / 60);
+    const highMin = Math.round(selRows.length * 15 / 60);
+    const asTime = m => m >= 90 ? `${(m / 60).toFixed(1)} hours` : `${m} minutes`;
+
+    // Measured at about US$0.011 per company on OpenRouter (26 real calls,
+    // $0.28). The other engines bill differently — Gemini's free tier stops
+    // at 20 a day and SerpAPI has a monthly allowance — so quoting a dollar
+    // figure for them would be misleading.
+    const cost = mode === 'openrouter'
+      ? `\n\nApproximate cost: US$${(selRows.length * 0.011).toFixed(2)}`
+      : '';
+
+    const ok = confirm(
+      `Enrich ${selRows.length.toLocaleString()} companies?\n\n` +
+      `This runs one lookup per company and takes roughly ` +
+      `${asTime(lowMin)} to ${asTime(highMin)}.${cost}\n\n` +
+      `You can leave this page — progress shows in the Suggestion Queue.`
+    );
+    if (!ok) return;
+  }
 
   let key;
   if (mode === 'ai') {
@@ -4205,7 +4278,7 @@ function setView(v) {
   // should not cost a round trip.
   if (presetsCleared) {
     currentPage = 1;
-    selected.clear();
+    clearSelection();
     lastFallbackTier = null;
     updateSelectedUI();
     fetchPage(1);
@@ -4255,7 +4328,7 @@ async function showEnrichedRecords() {
   // fallback cascade doesn't carry over from whatever was on screen.
   smartParserUsed  = false;
   lastFallbackTier = null;
-  selected.clear();
+  clearSelection();
   updateSelectedUI();
 
   // Reveal the control that is doing the filtering, so the state is visible
