@@ -14,3 +14,6 @@ data/
 # Scratch output from earlier debugging sessions.
 response.txt
 test.json
+
+# Files delivered by Claude into the workspace, not part of the project.
+Claude outputs/

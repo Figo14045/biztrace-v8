@@ -80,8 +80,27 @@ function buildEnrichmentSelect() {
 // SELECT expression for each "virtual" column we need to compute.
 // For real columns, we just use the column name directly. For derived ones,
 // we emit a computed expression with an alias.
+// The real SQL behind each derived column, defined once so the SELECT and the
+// WHERE cannot disagree. A derived column has no row storage, so filtering on
+// its ALIAS fails — SQLite rejects a SELECT alias in a WHERE clause, which is
+// what produced "no such column: has_auditor" whenever anyone used the Auditor
+// column filter.
+const DERIVED_CONDITION = {
+  // 'na' is this dataset's missing marker, not NULL — see the schema notes.
+  // The original check excluded only NULL and empty string, so it reported
+  // "has auditor" for EVERY row: measured against the August release, 816,889
+  // of 817,218 sampled companies carry 'na' here and only 329 name a real
+  // audit firm. The AUDITED badge was therefore on all of them and meant
+  // nothing.
+  'has_auditor': `(uen_of_audit_firm1 IS NOT NULL AND uen_of_audit_firm1 NOT IN ('', 'na'))`,
+};
+
+// Derived columns that evaluate to a boolean, so an incoming 'true'/'false'
+// can be coerced to the 1/0 SQLite actually compares against.
+const DERIVED_BOOLEAN = new Set(['has_auditor']);
+
 const SELECT_EXPR = {
-  'has_auditor':  `(uen_of_audit_firm1 IS NOT NULL AND uen_of_audit_firm1 != '') AS has_auditor`,
+  'has_auditor':  `${DERIVED_CONDITION['has_auditor']} AS has_auditor`,
   'full_address': `TRIM(COALESCE(block || ' ', '') || COALESCE(street_name, '') || ' ' || COALESCE('#' || level_no || '-' || unit_no, '') || COALESCE(' ' || building_name, '') || COALESCE(' SINGAPORE ' || postal_code, '')) AS full_address`,
 };
 
@@ -126,7 +145,22 @@ function buildWhere(filters, qualify) {
     if (!ALLOWED_COLUMNS.has(f.field)) {
       throw new Error(`Unknown filter column: ${f.field}`);
     }
-    const col = quoteCol(f.field, qualify);
+    // A derived column has to be filtered by its underlying expression; its
+    // alias does not exist at WHERE time.
+    const derived = DERIVED_CONDITION[f.field];
+    const col = derived || quoteCol(f.field, qualify);
+
+    // The frontend sends has_auditor as 'true'/'false' strings. The
+    // expression evaluates to 1/0, and 1 = 'true' is false in SQLite, so
+    // without this the filter silently matched nothing instead of erroring —
+    // arguably worse than the crash it replaced.
+    if (DERIVED_BOOLEAN.has(f.field) && (f.op === 'eq' || f.op === 'neq')) {
+      const truthy = f.value === true || f.value === 1 ||
+                     String(f.value).toLowerCase() === 'true' || f.value === '1';
+      clauses.push(f.op === 'eq' ? (truthy ? col : `NOT ${col}`)
+                                 : (truthy ? `NOT ${col}` : col));
+      continue;
+    }
 
     switch (f.op) {
       case 'eq':

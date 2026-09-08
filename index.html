@@ -3524,7 +3524,7 @@ function renderTable() {
       <td class="addr-col">${row.unit_no||'—'}</td>
       <td class="addr-col" style="${isOverdue(row.annual_return_date)?'color:var(--red)':''}">${fmt(row.annual_return_date)}</td>
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
-      <td>${row.uen_of_audit_firm1?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
+      <td>${hasRealValue(row.uen_of_audit_firm1)?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
       <td>${voCell}</td>
       <td>${websiteLinkHtml(enr.website, 'color:var(--accent2);font-size:11px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;display:block;max-width:150px')
             || (enr.badge ? `<span style="color:var(--text3);font-size:10px;font-style:italic">No website found</span>` : '—')}</td>
@@ -5235,6 +5235,19 @@ function shortType(t) {
     'PUBLIC COMPANY LIMITED BY GUARANTEE': 'Public Ltd Guarantee',
   };
   return map[t.toUpperCase()] || t;
+}
+
+// ACRA writes the literal string 'na' for a missing value rather than leaving
+// the field empty, so a plain truthiness test says "yes" to every row. The
+// AUDITED badge used one and was therefore shown on all 2.1M companies: in the
+// August release, 816,889 of 817,218 sampled rows carry 'na' here and only 329
+// name a real audit firm. Keep this in step with DERIVED_CONDITION.has_auditor
+// in netlify/functions/query.js — the badge and the Auditor filter have to
+// agree on what "has an auditor" means.
+function hasRealValue(v) {
+  if (v === null || v === undefined) return false;
+  const s = String(v).trim();
+  return s !== '' && s.toLowerCase() !== 'na';
 }
 
 function statusBadge(s) {
