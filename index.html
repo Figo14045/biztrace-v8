@@ -3758,8 +3758,32 @@ async function exportCSV() {
   await markExported(allRows.map(r => r.uen).filter(uen => enrichData[uen]));
 }
 
-function exportEnrichedCSV() {
-  const rows = allResults.filter(r => enrichData[r.uen]);
+// True once a company has actually been looked up, false while it is only
+// queued. startEnrich seeds every selected row with a placeholder so the run
+// is visible in the queue from the start; those placeholders carry no result
+// and must not be exported as if they were contacts.
+function isEnrichmentAttempted(e) {
+  if (!e) return false;
+  return !!(e.badge || e.outcome || e.website || e.email || e.phone);
+}
+
+// Export of the rows in the enrichment panel.
+//
+// This used to read allResults, which holds only the page currently on screen.
+// So a 500-company run exported 100 rows — the same page-scoping bug that made
+// a multi-page selection enrich only one page, in a function I missed when I
+// fixed that one. The panel is about the selection, so the export is too.
+async function exportEnrichedCSV() {
+  // Fall back to the visible page only if nothing is selected, so the button
+  // still does something sensible after a selection has been cleared.
+  const scope = selectedRowList().length ? selectedRowList() : (allResults || []);
+  const rows = scope.filter(r => isEnrichmentAttempted(enrichData[r.uen]));
+
+  if (!rows.length) {
+    showToast('Nothing enriched yet to export');
+    return;
+  }
+
   const enrichedRows = rows.map(r => {
     const e = enrichData[r.uen] || {};
     const chk = e.email_check || {};
@@ -3788,7 +3812,16 @@ function exportEnrichedCSV() {
       email_note:         chk.note       || '',
     };
   });
-  downloadCSV(enrichedRows, 'biztrace_enriched.csv');
+  const stamp = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  downloadCSV(enrichedRows, `biztrace_enriched_${stamp}.csv`);
+  showToast(`Exported ${rows.length.toLocaleString()} enriched rows`);
+
+  // Stamp these as exported, exactly as exportCSV does. Without this, rows
+  // handed out from this panel stayed unexported in the database and came
+  // back in the next "not yet exported" export — the duplicate-rows problem
+  // the exported_at column was added to solve, still live on this one screen.
+  // After the download, so a failed export leaves rows takeable again.
+  await markExported(rows.map(r => r.uen));
 }
 
 function downloadCSV(rows, filename) {
