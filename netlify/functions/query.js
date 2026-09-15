@@ -99,6 +99,36 @@ const DERIVED_CONDITION = {
 // can be coerced to the 1/0 SQLite actually compares against.
 const DERIVED_BOOLEAN = new Set(['has_auditor']);
 
+// "This column holds a real value", for use alongside a range comparison.
+// See the range cases in buildWhere for why every one of them needs it.
+function rangeGuard(col) {
+  return `${col} NOT IN ('', 'na')`;
+}
+
+// Columns whose values are numbers, not text or dates.
+//
+// Every filter value arrives from the browser as a string, and SQLite sorts
+// by type class before value: an INTEGER bind is below EVERY text value, and
+// a TEXT bind compares lexicographically, where '9' > '25'. So "5 to 20
+// officers" was wrong in both directions depending on how the column was
+// declared — either no rows at all, or every row.
+//
+// CAST makes the comparison numeric whichever way the column is stored, which
+// matters because the `companies` table predates the migrations in this repo
+// and its declared types are not recorded here. 'na' casts to 0, so the
+// rangeGuard above is load-bearing rather than belt-and-braces.
+const NUMERIC_COLUMNS = new Set(['no_of_officers']);
+
+function rangeOperand(field, col) {
+  return NUMERIC_COLUMNS.has(field) ? `CAST(${col} AS INTEGER)` : col;
+}
+
+function rangeValue(field, value) {
+  if (!NUMERIC_COLUMNS.has(field)) return value;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : value;
+}
+
 const SELECT_EXPR = {
   'has_auditor':  `${DERIVED_CONDITION['has_auditor']} AS has_auditor`,
   'full_address': `TRIM(COALESCE(block || ' ', '') || COALESCE(street_name, '') || ' ' || COALESCE('#' || level_no || '-' || unit_no, '') || COALESCE(' ' || building_name, '') || COALESCE(' SINGAPORE ' || postal_code, '')) AS full_address`,
@@ -167,14 +197,25 @@ function buildWhere(filters, qualify) {
         clauses.push(`${col} = ?`); args.push(f.value); break;
       case 'neq':
         clauses.push(`${col} != ?`); args.push(f.value); break;
-      case 'gt':
-        clauses.push(`${col} > ?`); args.push(f.value); break;
-      case 'gte':
-        clauses.push(`${col} >= ?`); args.push(f.value); break;
-      case 'lt':
-        clauses.push(`${col} < ?`); args.push(f.value); break;
-      case 'lte':
-        clauses.push(`${col} <= ?`); args.push(f.value); break;
+      // Range comparisons exclude the missing-value marker.
+      //
+      // ACRA writes the literal string 'na' where there is no value, and 'na'
+      // sorts above every digit, so `annual_return_date >= '2025-01-01'` was
+      // TRUE for every row with no annual return date at all — 63% of the
+      // table. A lower-bound filter returned more missing-data rows than real
+      // matches. ("Overdue only" uses `lt` and happened to be correct, but
+      // only by the luck of comparing the other way; now it holds by
+      // construction.)
+      //
+      // Asking for a value in a range cannot sensibly mean "or no value", so
+      // this applies to every range op rather than to a list of columns. On a
+      // genuinely numeric column the guard is simply always true.
+      case 'gt': case 'gte': case 'lt': case 'lte': {
+        const SQL_OP = { gt: '>', gte: '>=', lt: '<', lte: '<=' };
+        clauses.push(`(${rangeOperand(f.field, col)} ${SQL_OP[f.op]} ? AND ${rangeGuard(col)})`);
+        args.push(rangeValue(f.field, f.value));
+        break;
+      }
       case 'ilike': {
         // SQLite case-insensitive substring match
         clauses.push(`${col} LIKE ? COLLATE NOCASE`);
@@ -788,3 +829,8 @@ exports.handler = async function(event) {
 
   return { statusCode: 405, headers: CORS, body: JSON.stringify({ ok: false, error: 'Method not allowed' })};
 };
+
+// Exposed for the offline tests in scripts/, which check the generated SQL
+// rather than only the rows a particular SQLite build happens to return.
+// Netlify only ever calls `handler`; this changes nothing in production.
+exports.__test__ = { buildWhere, rangeGuard };

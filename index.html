@@ -1533,8 +1533,27 @@ function pgrestParamsToTurso(p) {
       continue;
     }
 
+    // One param can carry several conditions for the same column, chained by
+    // addCond as "gte.X&<col>=lte.Y". Splitting on the column name (rather
+    // than a bare "&") keeps a value containing an ampersand intact.
+    //
+    // Reading only the first operator here — which is what this used to do —
+    // swallowed the rest into the value string, so the SQL became a string
+    // comparison against "2026-09-14&annual_return_date=gte.2025-01-01&…".
+    // It matched roughly the right rows for the first condition and ignored
+    // every other one, which is why nobody noticed.
+    for (const cond of String(v).split(`&${k}=`)) {
+      pushFilter(out, k, cond);
+    }
+  }
+
+  return out;
+}
+
+// Turn one "op.arg" condition into a structured filter on `field`.
+function pushFilter(out, k, v) {
     const m = v.match(/^([a-z_]+)\.(.+)$/i);
-    if (!m) continue;
+    if (!m) return;
     const op = m[1];
     const arg = m[2];
 
@@ -1566,9 +1585,6 @@ function pgrestParamsToTurso(p) {
     } else if (op === 'is') {
       if (arg === 'null') out.filters.push({ field: k, op: 'is_null' });
     }
-  }
-
-  return out;
 }
 
 // Call the Turso proxy with a structured query. Auto-retries once on
@@ -2646,6 +2662,24 @@ async function sbDistinct(col) {
   return [...seen].sort();
 }
 
+// Add one condition to the query params for `col`, keeping any already there.
+//
+// The params are a flat object keyed by column name, but several filters can
+// legitimately target the same column: a From and a To, a min and a max, a
+// sidebar filter and a column-header filter, "Overdue only" on top of a date
+// range. Assigning directly meant the second one either silently replaced the
+// first (Reg. Date and Account Due Date lost their From bound entirely) or was
+// hand-chained in a form the converter could not read back (Annual Return,
+// officers). Either way the search ran and returned a confident wrong answer.
+//
+// The chained encoding below is the PostgREST convention and is what
+// pgrestParamsToTurso splits on, using the column name as the separator so a
+// bare "&" inside a value (a company name like "A & B PTE LTD") is not
+// mistaken for a condition boundary.
+function addCond(p, col, cond) {
+  p[col] = p[col] ? `${p[col]}&${col}=${cond}` : cond;
+}
+
 // Build PostgREST filter params from UI
 function buildParams() {
   const p = {};
@@ -2698,20 +2732,22 @@ function buildParams() {
     }
   }
 
-  if (ardFrom)  p['annual_return_date'] = `gte.${ardFrom}`;
-  if (ardTo)    p['annual_return_date'] = `lte.${ardTo}`;
-  if (ardFrom && ardTo) p['annual_return_date'] = `gte.${ardFrom}&annual_return_date=lte.${ardTo}`;
+  // Every condition goes through addCond so that two filters on one column
+  // combine instead of one silently replacing the other. See addCond below.
+  if (ardFrom)  addCond(p, 'annual_return_date', `gte.${ardFrom}`);
+  if (ardTo)    addCond(p, 'annual_return_date', `lte.${ardTo}`);
+  // "Overdue only" now narrows any range set above it rather than discarding
+  // it, which is what someone ticking it on top of a range actually means.
+  if (overdue)  addCond(p, 'annual_return_date', `lt.${today()}`);
 
-  if (overdue)  p['annual_return_date'] = `lt.${today()}`;
+  if (regFrom)  addCond(p, 'registration_incorporation_date', `gte.${regFrom}`);
+  if (regTo)    addCond(p, 'registration_incorporation_date', `lte.${regTo}`);
 
-  if (regFrom)  p['registration_incorporation_date'] = `gte.${regFrom}`;
-  if (regTo)    p['registration_incorporation_date'] = `lte.${regTo}`;
+  if (accFrom)  addCond(p, 'account_due_date', `gte.${accFrom}`);
+  if (accTo)    addCond(p, 'account_due_date', `lte.${accTo}`);
 
-  if (accFrom)  p['account_due_date'] = `gte.${accFrom}`;
-  if (accTo)    p['account_due_date'] = `lte.${accTo}`;
-
-  if (offMin)   p['no_of_officers'] = `gte.${offMin}`;
-  if (offMax)   p['no_of_officers'] = (p['no_of_officers'] ? p['no_of_officers'] : '') + `&no_of_officers=lte.${offMax}`;
+  if (offMin)   addCond(p, 'no_of_officers', `gte.${offMin}`);
+  if (offMax)   addCond(p, 'no_of_officers', `lte.${offMax}`);
 
   // Multi-selects — only filter if not all checked
   const allStatuses = filterOptions['entity_status_description'] || [];
@@ -2795,22 +2831,13 @@ function applyColumnFilters(p) {
     if (f.values && f.values.length) {
       p[col] = `in.(${f.values.map(s => `"${s}"`).join(',')})`;
     }
-    if (f.min != null && f.min !== '') {
-      const existing = p[col] ? `${p[col]}&${col}=` : '';
-      p[col] = `${existing}gte.${f.min}`;
-    }
-    if (f.max != null && f.max !== '') {
-      const existing = p[col] ? `${p[col]}&${col}=` : '';
-      p[col] = `${existing}lte.${f.max}`;
-    }
-    if (f.from) {
-      const existing = p[col] ? `${p[col]}&${col}=` : '';
-      p[col] = `${existing}gte.${f.from}`;
-    }
-    if (f.to) {
-      const existing = p[col] ? `${p[col]}&${col}=` : '';
-      p[col] = `${existing}lte.${f.to}`;
-    }
+    // These four combine with each other AND with whatever the sidebar already
+    // put on the same column — a column-header date range on top of "Overdue
+    // only", say. addCond is the single place that encoding lives.
+    if (f.min != null && f.min !== '') addCond(p, col, `gte.${f.min}`);
+    if (f.max != null && f.max !== '') addCond(p, col, `lte.${f.max}`);
+    if (f.from) addCond(p, col, `gte.${f.from}`);
+    if (f.to)   addCond(p, col, `lte.${f.to}`);
   }
 }
 
