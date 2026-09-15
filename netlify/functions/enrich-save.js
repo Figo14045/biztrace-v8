@@ -103,6 +103,23 @@ async function executePipeline(statements) {
   return json.results || [];
 }
 
+// How many rows a pipeline actually changed.
+//
+// This matters for the UPDATE-only actions. An `UPDATE ... WHERE uen = ?` that
+// matches nothing is not an error in SQLite, so an approval for a company
+// whose enrichment had never been saved used to answer ok:true and write
+// nothing — the reviewer's decision looked accepted, then vanished on the next
+// refresh along with the enrichment. The caller can now tell "saved" from
+// "no such row".
+function countAffected(results) {
+  let n = 0;
+  for (const r of (results || [])) {
+    const c = r?.response?.result?.affected_row_count;
+    if (typeof c === 'number') n += c;
+  }
+  return n;
+}
+
 // Build the upsert for one enrichment record.
 //
 // On conflict we refresh the data and bump the counter, but deliberately do NOT
@@ -244,15 +261,26 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ ok: false, error: `Bad record: ${e.message}` }) };
   }
 
+  let results;
   try {
-    await executePipeline(statements);
+    results = await executePipeline(statements);
   } catch (e) {
     return { statusCode: 500, headers: CORS, body: JSON.stringify({ ok: false, error: e.message }) };
   }
 
-  return {
-    statusCode: 200,
-    headers: CORS,
-    body: JSON.stringify({ ok: true, action, saved: valid.length, enriched_at: nowIso })
-  };
+  // 'save' is an upsert, so it always writes and the row count says nothing
+  // useful. 'approve' and 'exported' are plain UPDATEs that can match nothing;
+  // report what actually changed so the client can tell the user the truth.
+  const body = { ok: true, action, saved: valid.length, enriched_at: nowIso };
+
+  if (action === 'approve' || action === 'exported') {
+    const updated = countAffected(results);
+    body.updated = updated;
+    body.missing = valid.length - updated;
+    if (body.missing > 0) {
+      body.warning = `${body.missing} of ${valid.length} record(s) had no saved enrichment to update`;
+    }
+  }
+
+  return { statusCode: 200, headers: CORS, body: JSON.stringify(body) };
 };

@@ -3965,6 +3965,15 @@ function queueEnrichSave(uen) {
 
 // A save failure must never abort an enrichment run — the lookups are already
 // paid for, so we warn and carry on rather than throwing.
+//
+// But "carry on" used to mean throwing the batch away: the buffer was emptied
+// before the request and never refilled, so a database hiccup during a long
+// unattended run silently dropped every batch of 10 from that point on. The
+// screen kept showing those rows as enriched until someone refreshed, and then
+// they were simply gone. Failed records now go back in the buffer and are
+// retried on the next flush.
+let enrichSaveFailures = 0;
+
 async function flushEnrichSaves() {
   if (!enrichSaveBuffer.length) return;
   const batch = enrichSaveBuffer;
@@ -3984,11 +3993,34 @@ async function flushEnrichSaves() {
       }
     }
     console.log(`Saved ${batch.length} enrichment(s)`);
+    enrichSaveFailures = 0;
   } catch (e) {
-    console.warn('Enrichment save failed (results kept in memory):', e.message);
-    showToast('Could not save enrichment to database — results still shown');
+    // Put them back at the FRONT so the oldest paid-for results are retried
+    // first, and de-duplicate by uen in case the same company was re-enriched
+    // while a previous batch was still unsaved.
+    const byUen = new Map();
+    for (const rec of batch.concat(enrichSaveBuffer)) byUen.set(rec.uen, rec);
+    enrichSaveBuffer = [...byUen.values()];
+
+    enrichSaveFailures++;
+    console.warn(`Enrichment save failed (${enrichSaveBuffer.length} unsaved, will retry):`, e.message);
+    showToast(`Could not save to database — ${enrichSaveBuffer.length} result${enrichSaveBuffer.length === 1 ? '' : 's'} waiting to retry`);
   }
 }
+
+// How many enrichment results are enriched but not yet written to the
+// database. Used to warn before the tab closes and to report honestly at the
+// end of a run.
+function unsavedEnrichCount() { return enrichSaveBuffer.length; }
+
+// Closing the tab with unsaved results throws away lookups that have already
+// been paid for. The browser shows its own generic wording here; what matters
+// is that the dialog appears at all.
+window.addEventListener('beforeunload', (e) => {
+  if (!unsavedEnrichCount()) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 
 // Persist a single approve/reject. Optimistic: the UI has already updated, so
 // we only need to tell the user if the write did not stick.
@@ -4001,9 +4033,17 @@ async function persistApproval(uen, state) {
     });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'approve failed');
+
+    // The write can succeed and still change nothing, when the enrichment it
+    // refers to was never saved (see countAffected in enrich-save.js). Saying
+    // "saved" here would be a lie the reviewer only discovers after a refresh,
+    // when both the decision and the result are gone.
+    if (j.missing > 0) {
+      throw new Error('this result is not in the database yet');
+    }
   } catch (e) {
     console.warn('Approval not saved:', e.message);
-    showToast('Could not save approval — it may not persist');
+    showToast(`Could not save approval — ${e.message}`);
   }
 }
 
@@ -4174,6 +4214,19 @@ async function startEnrich() {
   btn.disabled = true;
   btn.textContent = '⏳ Running…';
 
+  // Count what actually happened rather than assuming the loop's length is a
+  // success count. Reporting "Done — 500 enriched" after 500 failures is how a
+  // dead API key looked like a successful run.
+  let succeeded = 0, failed = 0, consecutiveFailures = 0, lastError = '';
+
+  // Stop a run that is failing systemically. A rejected key, an exhausted
+  // balance or a provider outage fails identically on every company, so
+  // grinding through the rest costs time and possibly money while teaching
+  // nobody anything. Gemini already stopped on exhausted quota; the other
+  // engines had no equivalent. Five in a row is past coincidence — a genuine
+  // per-company failure does not repeat that cleanly.
+  const FAILURE_STREAK_LIMIT = 5;
+
   for (let i = 0; i < selRows.length; i++) {
     const row = selRows[i];
     document.getElementById('enrich-progress').textContent =
@@ -4192,6 +4245,8 @@ async function startEnrich() {
       // Buffer the result for write-back. Flushes automatically every
       // ENRICH_SAVE_BATCH companies so a crash can't lose a whole run.
       await queueEnrichSave(row.uen);
+      succeeded++;
+      consecutiveFailures = 0;
     } catch(e) {
       // Daily Gemini quota exhausted — stop the whole run rather than marking
       // every remaining row as a failure. The rest would all fail identically.
@@ -4200,7 +4255,7 @@ async function startEnrich() {
         // were paid for and must not be lost just because the quota ran out.
         await flushEnrichSaves();
         document.getElementById('enrich-progress').innerHTML =
-          `⚠ Daily Gemini quota reached (free tier). ${i} of ${selRows.length} enriched. ` +
+          `⚠ Daily Gemini quota reached (free tier). ${succeeded} of ${selRows.length} enriched. ` +
           `Resets at midnight Pacific time, or switch to SerpAPI / another Gemini key.`;
         btn.disabled = false;
         btn.textContent = '▶ Start';
@@ -4209,8 +4264,38 @@ async function startEnrich() {
       }
       enrichData[row.uen] = { badge: 'ERROR', badgeClass: 'wrong', website: null, email: null, phone: null };
       const er = document.getElementById(`er-${row.uen}`);
-      if (er) er.querySelector('.enrich-status').textContent = 'error';
+      // Show the reason, not just the word "error". The message was going only
+      // to the console, so a whole failed run told the user nothing they could
+      // act on.
+      if (er) {
+        const cell = er.querySelector('.enrich-status');
+        cell.textContent = 'error';
+        cell.title = e.message || 'unknown error';
+      }
       console.warn('Enrich error for', row.uen, e.message);
+
+      failed++;
+      consecutiveFailures++;
+      lastError = e.message || 'unknown error';
+
+      if (consecutiveFailures >= FAILURE_STREAK_LIMIT) {
+        // Save whatever did work before stopping — those lookups were paid for.
+        await flushEnrichSaves();
+        const done = i + 1;
+        document.getElementById('enrich-progress').innerHTML =
+          `⚠ Stopped after ${consecutiveFailures} failures in a row — ` +
+          `${succeeded} of ${selRows.length} enriched.<br>` +
+          `Last error: ${esc(lastError)}<br>` +
+          `<span style="color:var(--text3)">${selRows.length - done} not attempted. ` +
+          `Check the API key or account balance for this engine, then re-run — ` +
+          `filter to "Not enriched yet" so you don't pay twice.</span>`;
+        btn.disabled = false;
+        btn.textContent = '▶ Start';
+        updateQueueCount();
+        if (currentView === 'queue') renderQueue();
+        renderTable();
+        return;
+      }
     }
 
     // Gemini free tier is the tightest: ~5-10 RPM, so 4.5s spacing keeps us
@@ -4227,7 +4312,22 @@ async function startEnrich() {
   await flushEnrichSaves();
   await loadQueue();
 
-  document.getElementById('enrich-progress').textContent = `✓ Done — ${selRows.length} companies enriched`;
+  // Report what happened, not how many rows were attempted. Failures and
+  // unsaved results are named explicitly — silence about them is what let a
+  // fully failed run read as a clean sweep.
+  const unsaved = unsavedEnrichCount();
+  const parts = [`${succeeded} of ${selRows.length} enriched`];
+  if (failed)  parts.push(`${failed} failed`);
+  if (unsaved) parts.push(`${unsaved} not yet saved to the database`);
+
+  const prog = document.getElementById('enrich-progress');
+  if (failed || unsaved) {
+    prog.innerHTML = `⚠ Finished — ${esc(parts.join(', '))}` +
+      (lastError ? `<br><span style="color:var(--text3)">Last error: ${esc(lastError)}</span>` : '');
+  } else {
+    prog.textContent = `✓ Done — ${succeeded} companies enriched`;
+  }
+
   // Covers every engine, not just Gemini.
   updateQueueCount();
   if (currentView === 'queue') renderQueue();
