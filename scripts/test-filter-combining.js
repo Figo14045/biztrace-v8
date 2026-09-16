@@ -190,5 +190,36 @@ console.log('\nEncoding edge cases');
   check('second is chained with the column name', p2.x === 'gte.1&x=lte.9', p2.x);
 }
 
+console.log('\nOverdue toggle tests a real deadline');
+{
+  // annual_return_date holds the date the last return was FILED, so it is
+  // always in the past and `< today` was true for every company that had ever
+  // filed. account_due_date is the only field here that looks forward.
+  const buildParamsSrc = extractFunction(HTML, 'buildParams');
+  check('the toggle filters on account_due_date',
+        /if \(overdue\)\s+addCond\(p, 'account_due_date', `lt\.\$\{today\(\)\}`\)/.test(buildParamsSrc),
+        'still filtering on annual_return_date');
+  check('it does not touch annual_return_date',
+        !/if \(overdue\)[\s\S]{0,60}'annual_return_date'/.test(buildParamsSrc));
+
+  // C1 due 2025-09-30, C2 2025-11-30, C3 2024-03-31 are past; C4 2026-12-31
+  // is future; C5/C6 have none.
+  const p = {};
+  fe.addCond(p, 'account_due_date', 'lt.2026-09-15');
+  const got = run(p);
+  check('past due dates match', eq(got, ['C1', 'C2', 'C3']), `got ${got}`);
+  check('a future due date does not match', !got.includes('C4'), `got ${got}`);
+  check('no recorded due date does not match',
+        !got.includes('C5') && !got.includes('C6'), `got ${got}`);
+
+  // The red highlight on the Annual Return column was the same mistake.
+  check('the filing-date column is no longer coloured as a deadline',
+        !/isOverdue\(row\.annual_return_date\)/.test(HTML),
+        'annual_return_date is still styled by a deadline check');
+  const helper = extractFunction(HTML, 'isDeadlinePassed');
+  check("the deadline helper ignores the 'na' marker",
+        /toLowerCase\(\) === 'na'/.test(helper));
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exitCode = failures ? 1 : 0;

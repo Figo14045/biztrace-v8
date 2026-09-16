@@ -1146,12 +1146,9 @@ body.show-advanced .advanced-only { display: block; }
             <label>To</label>
             <input class="filter-input" id="f-ard-to" type="date">
           </div>
-          <div class="toggle-row" style="margin-top:4px">
-            <label>Overdue only</label>
-            <label class="toggle">
-              <input type="checkbox" id="f-overdue">
-              <span class="toggle-slider"></span>
-            </label>
+          <div style="font-size:10px;color:var(--text3);line-height:1.4;margin-top:4px">
+            The date the last annual return was <em>filed</em>, not a deadline.
+            Every value is in the past.
           </div>
           <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:8px;margin-bottom:2px">Reg. Date</div>
           <div class="filter-row">
@@ -1170,6 +1167,18 @@ body.show-advanced .advanced-only { display: block; }
           <div class="filter-row">
             <label>To</label>
             <input class="filter-input" id="f-acc-to" type="date">
+          </div>
+          <div class="toggle-row" style="margin-top:4px">
+            <label>Account due date passed</label>
+            <label class="toggle">
+              <input type="checkbox" id="f-overdue">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div style="font-size:10px;color:var(--text3);line-height:1.4;margin-top:4px">
+            Filing deadline is in the past and nothing has been filed since.
+            ACRA records no due date for about half of all companies —
+            those are excluded, not shown as compliant.
           </div>
         </div>
       </div>
@@ -2736,9 +2745,21 @@ function buildParams() {
   // combine instead of one silently replacing the other. See addCond below.
   if (ardFrom)  addCond(p, 'annual_return_date', `gte.${ardFrom}`);
   if (ardTo)    addCond(p, 'annual_return_date', `lte.${ardTo}`);
-  // "Overdue only" now narrows any range set above it rather than discarding
-  // it, which is what someone ticking it on top of a range actually means.
-  if (overdue)  addCond(p, 'annual_return_date', `lt.${today()}`);
+  // The overdue toggle tests account_due_date, NOT annual_return_date.
+  //
+  // It used to be `annual_return_date < today`, which never identified an
+  // overdue company. annual_return_date holds the date the last annual return
+  // was FILED, so it is always in the past — measured across 409,102 rows of
+  // the August release, not one value is in the future. The condition was
+  // therefore true for every company that has ever filed, and the toggle
+  // reduced to "has an annual return date at all": it kept 63% of live
+  // companies including ones that filed weeks ago, and silently hid the
+  // 44,930 with no filing on record, about half of them newly registered.
+  //
+  // account_due_date is the only field here that is a real deadline — 19.7% of
+  // its values are in the future — so "before today" genuinely means missed.
+  // It narrows any range set above rather than replacing it.
+  if (overdue)  addCond(p, 'account_due_date', `lt.${today()}`);
 
   if (regFrom)  addCond(p, 'registration_incorporation_date', `gte.${regFrom}`);
   if (regTo)    addCond(p, 'registration_incorporation_date', `lte.${regTo}`);
@@ -3549,7 +3570,7 @@ function renderTable() {
       <td class="addr-col">${row.postal_code||'—'}</td>
       <td class="addr-col">${row.level_no||'—'}</td>
       <td class="addr-col">${row.unit_no||'—'}</td>
-      <td class="addr-col" style="${isOverdue(row.annual_return_date)?'color:var(--red)':''}">${fmt(row.annual_return_date)}</td>
+      <td class="addr-col">${fmt(row.annual_return_date)}</td>
       <td style="color:var(--text3)">${row.no_of_officers??'—'}</td>
       <td>${hasRealValue(row.uen_of_audit_firm1)?`<span class="badge badge-audit">AUDITED</span>`:'—'}</td>
       <td>${voCell}</td>
@@ -5381,7 +5402,20 @@ function truncate(s, n) { return s && s.length > n ? s.slice(0,n)+'…' : (s||''
 function today() { return new Date().toISOString().split('T')[0]; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function fmt(d) { return d ? d.slice(0,10) : '—'; }
-function isOverdue(d) { return d && d < today(); }
+// Whether a DEADLINE has passed. Only ever pass a due date to this.
+//
+// It used to colour the Annual Return column red, but that column holds the
+// date the last return was FILED, and a filing date is always in the past — so
+// every company that had ever filed showed red, including one that filed last
+// week. A warning that fires on 63% of rows is not a warning. The column is
+// now rendered plain; account_due_date is the field this belongs on, and it is
+// not currently a column in the table.
+function isDeadlinePassed(d) {
+  if (!d) return false;
+  const s = String(d).trim();
+  if (s === '' || s.toLowerCase() === 'na') return false;
+  return s < today();
+}
 
 function shortType(t) {
   if (!t) return '—';
