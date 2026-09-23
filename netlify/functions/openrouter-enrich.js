@@ -230,6 +230,25 @@ function normaliseResult(parsed) {
   };
 }
 
+// Pull the billing facts out of an OpenRouter response.
+//
+// Returned on the FAILURE paths as well as the success one, deliberately:
+// OpenRouter charges for the generation, not for whether we could use it. A
+// response we cannot parse has still been paid for, and a spend total that
+// silently omits those reads lower than the real bill exactly when something
+// is going wrong. See migration 008.
+function usageFrom(apiResp, outcome) {
+  const u = apiResp && apiResp.usage;
+  if (!u) return null;
+  return {
+    cost_usd: typeof u.cost === 'number' ? u.cost : null,
+    prompt_tokens: u.prompt_tokens ?? null,
+    completion_tokens: u.completion_tokens ?? null,
+    model_used: apiResp.model || OPENROUTER_MODEL,
+    outcome
+  };
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
@@ -282,7 +301,17 @@ exports.handler = async function (event) {
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 1024,
     temperature: 0.2,
-    plugins: [{ id: 'web', max_results: 5 }]
+    plugins: [{ id: 'web', max_results: 5 }],
+    // Return what this generation actually cost, in the same response.
+    //
+    // Without this the only way to learn the charge is a second call to
+    // /api/v1/generation, and there is no budget for one: a lookup with web
+    // search already spends 5-15s of Netlify's ~10s function allowance. This
+    // adds a `cost` (and `cost_details`) to the usage block at no extra
+    // round-trip. It is OpenRouter's own figure for the charge, not an
+    // estimate from token counts and a price list, so it stays correct when
+    // pricing changes or fallback routing serves a different model.
+    usage: { include: true }
   };
 
   let apiResp;
@@ -325,6 +354,7 @@ exports.handler = async function (event) {
       body: JSON.stringify({
         ok: false,
         error: 'Empty response from OpenRouter',
+        usage: usageFrom(apiResp, 'failed'),
         openrouter_raw: apiResp
       })
     };
@@ -335,7 +365,7 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers: CORS,
-      body: JSON.stringify({ ok: false, error: 'Could not parse JSON from OpenRouter response', raw_text: text.slice(0, 1500) })
+      body: JSON.stringify({ ok: false, error: 'Could not parse JSON from OpenRouter response', usage: usageFrom(apiResp, 'failed'), raw_text: text.slice(0, 1500) })
     };
   }
 
@@ -344,7 +374,7 @@ exports.handler = async function (event) {
     return {
       statusCode: 200,
       headers: CORS,
-      body: JSON.stringify({ ok: false, error: 'Unexpected response shape', raw_text: text.slice(0, 1500) })
+      body: JSON.stringify({ ok: false, error: 'Unexpected response shape', usage: usageFrom(apiResp, 'failed'), raw_text: text.slice(0, 1500) })
     };
   }
 
@@ -357,6 +387,7 @@ exports.handler = async function (event) {
     body: JSON.stringify({
       ok: true,
       result,
+      usage: usageFrom(apiResp, 'ok'),
       model_used: apiResp.model || OPENROUTER_MODEL
     })
   };

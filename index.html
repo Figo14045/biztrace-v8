@@ -29,6 +29,50 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Spend view ────────────────────────────────────────────────────────
+   Deliberately quiet. This is a reference screen people open to answer one
+   question ("what did today cost?"), not a dashboard to be admired, so the
+   figures carry the page and everything around them stays recessive. */
+#spendView { padding:22px 26px; overflow-y:auto; }
+.sp-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:4px; }
+.sp-head h2 { font-size:16px; font-weight:600; letter-spacing:-0.01em; }
+.sp-sub { color:var(--text3); font-size:12px; max-width:70ch; line-height:1.5; }
+
+.sp-filters { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:16px 0 18px; }
+.sp-filters .tb-btn.active { border-color:var(--accent); color:var(--accent2); }
+
+.sp-tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:18px; }
+.sp-tile { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; }
+.sp-tile .k { font-family:var(--mono); font-size:10px; letter-spacing:0.08em;
+              text-transform:uppercase; color:var(--text3); display:block; margin-bottom:5px; }
+.sp-tile .v { font-family:var(--mono); font-size:20px; font-variant-numeric:tabular-nums; color:var(--text); }
+.sp-tile .v.muted { color:var(--text2); }
+.sp-tile .n { display:block; font-size:11px; color:var(--text3); margin-top:3px; }
+
+.sp-card { background:var(--surface); border:1px solid var(--border);
+           border-radius:var(--radius); padding:14px 16px; margin-bottom:18px; }
+.sp-card h3 { font-size:12px; font-family:var(--mono); letter-spacing:0.06em;
+              text-transform:uppercase; color:var(--text3); font-weight:500; margin-bottom:12px; }
+.sp-chart { width:100%; overflow-x:auto; }
+.sp-chart svg { display:block; }
+.sp-bar { fill:var(--accent); }
+.sp-bar:hover { fill:var(--accent2); }
+.sp-bar-fail { fill:var(--red); }
+.sp-grid { stroke:var(--border); stroke-width:1; }
+.sp-axis { fill:var(--text3); font-family:var(--mono); font-size:9px; }
+
+.sp-table { width:100%; border-collapse:collapse; font-size:12px; }
+.sp-table th { text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:0.06em;
+               text-transform:uppercase; color:var(--text3); font-weight:500;
+               padding:6px 10px; border-bottom:1px solid var(--border); }
+.sp-table td { padding:6px 10px; border-bottom:1px solid var(--border); color:var(--text2); }
+.sp-table tr:last-child td { border-bottom:none; }
+.sp-table td.num { font-family:var(--mono); font-variant-numeric:tabular-nums; text-align:right; color:var(--text); }
+.sp-table td.name { color:var(--text); }
+.sp-scroll { overflow-x:auto; }
+.sp-fail { color:var(--red); font-family:var(--mono); font-size:10px; }
+.sp-empty { color:var(--text3); font-size:12px; padding:18px 0; }
+
 /* ── Suggestion Queue ─────────────────────────────────────────────────── */
 #viewnav { display:flex; gap:4px; margin-left:18px; }
 .navbtn {
@@ -988,6 +1032,9 @@ body.show-advanced .advanced-only { display: block; }
   border-radius:4px; padding:3px 6px; font-family:var(--mono); font-size:10px;
 }
 .et-date { color-scheme:dark; }
+    .et-spend { font-family: var(--mono); font-size: 11px; color: var(--text2);
+                padding: 0 8px; white-space: nowrap; cursor: help; }
+    .et-spend b { color: var(--text); font-weight: 600; }
 .et-quick { padding:3px 8px !important; font-size:10px !important; }
 .et-check {
   display:flex; align-items:center; gap:4px; cursor:pointer;
@@ -1028,6 +1075,10 @@ body.show-advanced .advanced-only { display: block; }
             title="Every company we have already looked up, whatever the approval state">
       Enriched Records
     </button>
+    <button class="navbtn" data-view="spend" onclick="setView('spend')"
+            title="What the paid lookups have cost">
+      Spend
+    </button>
   </nav>
   <div class="spacer"></div>
   <div id="total-badge">DB: <span id="db-count">—</span> companies</div>
@@ -1044,6 +1095,46 @@ body.show-advanced .advanced-only { display: block; }
   </div>
   <div id="queue-list"></div>
 </div>
+
+  <!-- Spend: what the paid lookups have cost.
+       A separate view rather than a panel on Enriched Records, because the
+       question it answers ("what did this cost") is asked at a different time
+       from "which companies have we looked up", and cramming both into one
+       toolbar would serve neither. -->
+  <div id="spendView" hidden>
+    <div class="sp-head">
+      <h2>Spend</h2>
+      <span class="sp-sub" id="sp-range-note"></span>
+    </div>
+
+    <div class="sp-filters">
+      <button class="tb-btn sp-preset" data-range="today" onclick="setSpendRange('today')">Today</button>
+      <button class="tb-btn sp-preset" data-range="7d"    onclick="setSpendRange('7d')">7 days</button>
+      <button class="tb-btn sp-preset active" data-range="30d" onclick="setSpendRange('30d')">30 days</button>
+      <button class="tb-btn sp-preset" data-range="all"   onclick="setSpendRange('all')">All time</button>
+      <span style="width:10px"></span>
+      <input type="date" class="et-date" id="sp-from" onchange="applySpendDates()" title="From (inclusive)">
+      <span class="et-dash">&ndash;</span>
+      <input type="date" class="et-date" id="sp-to" onchange="applySpendDates()" title="To (inclusive)">
+    </div>
+
+    <div class="sp-tiles" id="sp-tiles"></div>
+
+    <div class="sp-card">
+      <h3>Cost per day</h3>
+      <div class="sp-chart" id="sp-chart"></div>
+    </div>
+
+    <div class="sp-card">
+      <h3>By engine</h3>
+      <div class="sp-scroll"><table class="sp-table" id="sp-engines"></table></div>
+    </div>
+
+    <div class="sp-card">
+      <h3>Recent lookups</h3>
+      <div class="sp-scroll"><table class="sp-table" id="sp-recent"></table></div>
+    </div>
+  </div>
 
 <!-- Layout -->
 <div id="layout">
@@ -1354,6 +1445,7 @@ body.show-advanced .advanced-only { display: block; }
         <button class="tb-btn et-quick" onclick="setEnrichedRange('today')">Today</button>
         <button class="tb-btn et-quick" onclick="setEnrichedRange('7d')">7 days</button>
         <button class="tb-btn et-quick" onclick="setEnrichedRange('all')" title="Clear the date range">All</button>
+        <span class="et-spend" id="et-spend" hidden></span>
         <select class="et-sel" id="et-approval" onchange="setEnrichedApproval(this.value)" title="Approval state">
           <option value="any">Any decision</option>
           <option value="pending">Pending</option>
@@ -1954,12 +2046,60 @@ function rerunEnrichedQuery() {
   lastFallbackTier = null;
   updateSelectedUI();
   fetchPage(1);
+  loadSpendSummary();
+}
+
+// What the paid lookups in the selected range cost.
+//
+// Deliberately says "recorded", not "spent". usage_log holds one row per call
+// that came BACK to us; a call killed by the Netlify function timeout is
+// billed by the provider and never logged. The OpenRouter dashboard remains
+// the authority on the bill — this answers "what did the work we kept cost",
+// which is the question the team actually asks, and says so on hover.
+async function loadSpendSummary() {
+  const el = document.getElementById('et-spend');
+  if (!el) return;
+  if (enrichedFilterMode !== 'enriched') { el.hidden = true; return; }
+
+  try {
+    const r = await fetch('/.netlify/functions/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'spend_summary',
+        from: enrichedFrom || null,
+        to: enrichedTo ? exclusiveEnd(enrichedTo) : null,
+      })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'spend query failed');
+
+    if (!j.calls) { el.hidden = true; return; }
+
+    const cost = typeof j.cost_usd === 'number' ? formatUsd(j.cost_usd) : '—';
+    el.innerHTML = `<b>${cost}</b> · ${j.calls.toLocaleString()} lookup${j.calls === 1 ? '' : 's'}`;
+
+    const notes = [
+      'Recorded cost of API calls in this date range.',
+      'The provider bills per call, so failed lookups are included.',
+    ];
+    if (j.failed_calls)       notes.push(`${j.failed_calls} of these failed but were still charged.`);
+    if (j.calls_without_cost) notes.push(`${j.calls_without_cost} reported no cost (free-tier or quota-based engines).`);
+    notes.push('A lookup cut off by the function timeout is billed but never reaches us — check OpenRouter for the definitive bill.');
+    el.title = notes.join('\n');
+    el.hidden = false;
+  } catch (e) {
+    // A missing spend figure must never break the records view.
+    console.warn('Spend summary unavailable:', e.message);
+    el.hidden = true;
+  }
 }
 
 // Show the controls only where they mean something.
 function refreshEnrichedTools() {
   const el = document.getElementById('enriched-tools');
   if (el) el.hidden = (enrichedFilterMode !== 'enriched');
+  loadSpendSummary();
 }
 
 // Applied in SQL, so changing it re-runs the query from page 1 — same shape
@@ -3679,6 +3819,235 @@ function updateSelectedUI() {
 }
 
 // ══════════════════════════════════════════════════════════════
+// SPEND VIEW
+// ══════════════════════════════════════════════════════════════
+// What the paid lookups have cost, over a date range.
+//
+// Reads usage_log — one row per API CALL, including calls that were billed and
+// then failed. A total built from the enrichments table would omit those and
+// read lower than the real bill, and the gap widens exactly when a run is
+// going wrong. See migration 008.
+//
+// Language throughout is "recorded", never "spent": a call killed by the
+// Netlify function timeout is billed by the provider and never reaches us to
+// be logged. The provider's dashboard is the authority on the invoice; this
+// answers where the money went, which is the question the team actually asks.
+
+let spendFrom = null, spendTo = null, spendPreset = '30d';
+
+function setSpendRange(preset) {
+  spendPreset = preset;
+  const today = sgToday();
+  const back = days => {
+    const d = new Date(`${today}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - days);
+    return d.toISOString().slice(0, 10);
+  };
+  if (preset === 'today')    { spendFrom = today;   spendTo = today; }
+  else if (preset === '7d')  { spendFrom = back(6); spendTo = today; }
+  else if (preset === '30d') { spendFrom = back(29); spendTo = today; }
+  else                       { spendFrom = null;    spendTo = null; }
+
+  const f = document.getElementById('sp-from'); if (f) f.value = spendFrom || '';
+  const t = document.getElementById('sp-to');   if (t) t.value = spendTo   || '';
+  refreshSpendPresets();
+  loadSpendView();
+}
+
+function applySpendDates() {
+  spendFrom = document.getElementById('sp-from').value || null;
+  spendTo   = document.getElementById('sp-to').value   || null;
+  spendPreset = null;                       // a typed range is not a preset
+  refreshSpendPresets();
+  loadSpendView();
+}
+
+function refreshSpendPresets() {
+  document.querySelectorAll('.sp-preset').forEach(b =>
+    b.classList.toggle('active', b.dataset.range === spendPreset));
+}
+
+async function loadSpendView() {
+  const tiles = document.getElementById('sp-tiles');
+  if (!tiles) return;
+  if (spendPreset === '30d' && !spendFrom && !spendTo) setSpendRangeDefaults();
+
+  tiles.innerHTML = '<div class="sp-empty">Loading…</div>';
+
+  const body = {
+    from: spendFrom || null,
+    to: spendTo ? exclusiveEnd(spendTo) : null,
+  };
+
+  try {
+    const [summary, daily] = await Promise.all([
+      spendQuery({ ...body, mode: 'spend_summary' }),
+      spendQuery({ ...body, mode: 'spend_daily' }),
+    ]);
+    renderSpendTiles(summary);
+    renderSpendChart(daily.days || []);
+    renderSpendEngines(summary.by_engine || []);
+    renderSpendRecent(daily.recent || []);
+    document.getElementById('sp-range-note').textContent =
+      spendFrom || spendTo
+        ? `${spendFrom || 'the beginning'} to ${spendTo || 'today'}`
+        : 'All recorded lookups';
+  } catch (e) {
+    tiles.innerHTML = `<div class="sp-empty">Could not load spend: ${esc(e.message)}</div>`;
+    console.warn('Spend view failed:', e.message);
+  }
+}
+
+function setSpendRangeDefaults() {
+  const today = sgToday();
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 29);
+  spendFrom = d.toISOString().slice(0, 10);
+  spendTo = today;
+  const f = document.getElementById('sp-from'); if (f) f.value = spendFrom;
+  const t = document.getElementById('sp-to');   if (t) t.value = spendTo;
+}
+
+async function spendQuery(payload) {
+  const r = await fetch('/.netlify/functions/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || 'query failed');
+  return j;
+}
+
+function renderSpendTiles(s) {
+  const perCall = (typeof s.cost_usd === 'number' && s.calls)
+    ? s.cost_usd / (s.calls - (s.calls_without_cost || 0) || 1) : null;
+
+  const tile = (k, v, note, muted) =>
+    `<div class="sp-tile"><span class="k">${k}</span>` +
+    `<span class="v${muted ? ' muted' : ''}">${v}</span>` +
+    (note ? `<span class="n">${note}</span>` : '') + `</div>`;
+
+  document.getElementById('sp-tiles').innerHTML = [
+    tile('Recorded cost', formatUsd(s.cost_usd),
+         'What the provider charged for these calls'),
+    tile('Lookups', (s.calls || 0).toLocaleString(),
+         s.failed_calls ? `${s.failed_calls} failed — still charged` : 'all returned a result'),
+    tile('Average per lookup', perCall != null ? formatUsd(perCall) : '—',
+         'Across calls that reported a cost'),
+    // Tokens are secondary — the dollar figure is what anyone came here for.
+    tile('Tokens', s.prompt_tokens != null
+          ? ((s.prompt_tokens + (s.completion_tokens || 0))).toLocaleString() : '—',
+         'Prompt + completion', true),
+  ].join('');
+}
+
+// Cost per day, as bars.
+//
+// Bars rather than a line: each day is a discrete total, not a reading from a
+// continuous series, and a line between them would imply values in between.
+// One series, so no legend — the card heading names it.
+//
+// Days with nothing recorded are drawn as an empty slot rather than skipped,
+// so a quiet week reads as quiet rather than as missing data.
+function renderSpendChart(days) {
+  const el = document.getElementById('sp-chart');
+  if (!days.length) { el.innerHTML = '<div class="sp-empty">No lookups recorded in this range.</div>'; return; }
+
+  // Fill gaps so the x-axis is real time, not just the days that had activity.
+  const byDay = new Map(days.map(d => [d.day, d]));
+  const start = new Date(`${days[0].day}T00:00:00Z`);
+  const end   = new Date(`${days[days.length - 1].day}T00:00:00Z`);
+  const series = [];
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    series.push(byDay.get(key) || { day: key, calls: 0, cost_usd: 0, failed_calls: 0 });
+    if (series.length > 400) break;
+  }
+
+  const W = Math.max(520, series.length * 26);
+  const H = 180, PAD_L = 52, PAD_B = 26, PAD_T = 10, PAD_R = 8;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const max = Math.max(...series.map(d => d.cost_usd || 0), 0.0001);
+
+  // A round-ish top so the axis labels are readable numbers.
+  // Fine enough steps that the tallest bar fills most of the plot. A coarse
+  // ladder (1, 2, 5, 10) rounds $2.85 up to $5.00 and throws away 40% of the
+  // height, which makes a busy month look like a quiet one.
+  const niceMax = (() => {
+    const pow = Math.pow(10, Math.floor(Math.log10(max)));
+    for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (pow * m >= max) return pow * m;
+    return pow * 10;
+  })();
+
+  const bw = Math.max(3, Math.min(18, plotW / series.length - 2));
+  const x = i => PAD_L + (i + 0.5) * (plotW / series.length) - bw / 2;
+  const y = v => PAD_T + plotH - (v / niceMax) * plotH;
+
+  // Three gridlines is enough to read a magnitude without becoming furniture.
+  const ticks = [0, niceMax / 2, niceMax];
+  const grid = ticks.map(t => `
+    <line class="sp-grid" x1="${PAD_L}" y1="${y(t).toFixed(1)}" x2="${W - PAD_R}" y2="${y(t).toFixed(1)}"
+          ${t === 0 ? '' : 'stroke-dasharray="2 3"'} />
+    <text class="sp-axis" x="${PAD_L - 6}" y="${(y(t) + 3).toFixed(1)}" text-anchor="end">${formatUsd(t)}</text>`).join('');
+
+  // Label only enough dates to orient the reader — never one per bar.
+  const step = Math.max(1, Math.ceil(series.length / 8));
+  const baseline = PAD_T + plotH;
+  const bars = series.map((d, i) => {
+    const v = d.cost_usd || 0;
+    // Anchored to the baseline: a bar given a 2px minimum must grow upward
+    // from the axis, not hang below it.
+    const h = Math.max(v > 0 ? 2 : 0, baseline - y(v));
+    const top = baseline - h;
+    const title = `${d.day}\n${formatUsd(d.cost_usd)} · ${d.calls} lookup${d.calls === 1 ? '' : 's'}` +
+                  (d.failed_calls ? `\n${d.failed_calls} failed (still charged)` : '');
+    const cls = d.failed_calls && d.failed_calls === d.calls ? 'sp-bar sp-bar-fail' : 'sp-bar';
+    const label = i % step === 0
+      ? `<text class="sp-axis" x="${(x(i) + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${d.day.slice(5)}</text>`
+      : '';
+    return (v > 0
+      ? `<rect class="${cls}" x="${x(i).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>${title}</title></rect>`
+      : `<rect x="${x(i).toFixed(1)}" y="${(baseline - 1).toFixed(1)}" width="${bw.toFixed(1)}" height="1" fill="var(--border2)"><title>${title}</title></rect>`) + label;
+  }).join('');
+
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+       aria-label="Recorded cost per day">${grid}${bars}</svg>`;
+}
+
+function renderSpendEngines(rows) {
+  const t = document.getElementById('sp-engines');
+  if (!rows.length) { t.innerHTML = '<tr><td class="sp-empty">Nothing recorded yet.</td></tr>'; return; }
+  const NAME = { openrouter: 'OpenRouter', ai: 'Gemini', claude: 'Claude', serp: 'SerpAPI' };
+  t.innerHTML =
+    '<tr><th>Engine</th><th style="text-align:right">Lookups</th><th style="text-align:right">Recorded cost</th></tr>' +
+    rows.map(r => `<tr>
+      <td class="name">${esc(NAME[r.engine] || r.engine)}</td>
+      <td class="num">${r.calls.toLocaleString()}</td>
+      <td class="num">${r.cost_usd == null ? '<span style="color:var(--text3)">not billed in $</span>' : formatUsd(r.cost_usd)}</td>
+    </tr>`).join('');
+}
+
+function renderSpendRecent(rows) {
+  const t = document.getElementById('sp-recent');
+  if (!rows.length) { t.innerHTML = '<tr><td class="sp-empty">Nothing recorded yet.</td></tr>'; return; }
+  t.innerHTML =
+    '<tr><th>When</th><th>Company</th><th>Model</th><th style="text-align:right">Cost</th><th style="text-align:right">Tokens</th></tr>' +
+    rows.map(r => {
+      const when = String(r.called_at || '').replace('T', ' ').slice(0, 16);
+      const tok = (r.prompt_tokens || 0) + (r.completion_tokens || 0);
+      return `<tr>
+        <td style="font-family:var(--mono);font-size:11px">${esc(when)}</td>
+        <td class="name" title="${esc(r.uen || '')}">${esc(truncate(r.entity_name || r.uen || '—', 38))}
+          ${r.outcome === 'failed' ? '<span class="sp-fail"> failed</span>' : ''}</td>
+        <td style="font-size:11px;color:var(--text3)">${esc(truncate(r.model_used || '—', 28))}</td>
+        <td class="num">${formatUsd(r.cost_usd)}</td>
+        <td class="num">${tok ? tok.toLocaleString() : '—'}</td>
+      </tr>`;
+    }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
 // SORT
 // ══════════════════════════════════════════════════════════════
 function sortBy(col) {
@@ -4061,6 +4430,67 @@ async function flushEnrichSaves() {
 // end of a run.
 function unsavedEnrichCount() { return enrichSaveBuffer.length; }
 
+// ── Spend log ─────────────────────────────────────────────────────────────
+// One row per paid API call, written whether or not the lookup produced a
+// usable result: the provider charges for the generation, not for whether we
+// could parse it. Keeping this separate from the enrichment save is the whole
+// point — a total built only from saved results reads lower than the real
+// bill, and the gap widens exactly when something is failing.
+//
+// Buffered like the enrichment saves so a 500-row run makes ~25 write calls
+// rather than 500, and flushed on the same schedule.
+const USAGE_FLUSH_BATCH = 20;
+let usageBuffer = [];
+
+// Recorded spend for this run, shown when it finishes.
+let runSpendUsd = 0, runSpendCalls = 0;
+
+function logUsage(uen, engine, usage) {
+  if (!usage) return;                       // engine reported nothing billable
+  usageBuffer.push({
+    uen,
+    engine,
+    model_used: usage.model_used || null,
+    cost_usd: typeof usage.cost_usd === 'number' ? usage.cost_usd : null,
+    prompt_tokens: usage.prompt_tokens ?? null,
+    completion_tokens: usage.completion_tokens ?? null,
+    outcome: usage.outcome === 'failed' ? 'failed' : 'ok',
+  });
+  if (typeof usage.cost_usd === 'number') { runSpendUsd += usage.cost_usd; runSpendCalls++; }
+  if (usageBuffer.length >= USAGE_FLUSH_BATCH) return flushUsage();
+  return Promise.resolve();
+}
+
+// Never throws. A spend row failing to save must not abort a run or mark a
+// good enrichment as an error — but it is put back for the next flush rather
+// than dropped, for the same reason the enrichment buffer is.
+async function flushUsage() {
+  if (!usageBuffer.length) return;
+  const batch = usageBuffer;
+  usageBuffer = [];
+  try {
+    const r = await fetch('/.netlify/functions/enrich-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'usage', records: batch })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'usage save failed');
+  } catch (e) {
+    usageBuffer = batch.concat(usageBuffer);
+    console.warn(`Spend log not saved (${usageBuffer.length} pending):`, e.message);
+  }
+}
+
+// Cents are the wrong unit for a single lookup: one costs about US$0.011, and
+// rounding that to 2dp shows US$0.01, which reads as a suspiciously round
+// number and loses a tenth of the value. Below a dime, show four places.
+function formatUsd(n) {
+  if (typeof n !== 'number' || !isFinite(n)) return '—';
+  if (n === 0) return 'US$0.00';
+  return Math.abs(n) < 0.1 ? `US$${n.toFixed(4)}` : `US$${n.toFixed(2)}`;
+}
+
 // Closing the tab with unsaved results throws away lookups that have already
 // been paid for. The browser shows its own generic wording here; what matters
 // is that the dialog appears at all.
@@ -4266,6 +4696,7 @@ async function startEnrich() {
   // success count. Reporting "Done — 500 enriched" after 500 failures is how a
   // dead API key looked like a successful run.
   let succeeded = 0, failed = 0, consecutiveFailures = 0, lastError = '';
+  runSpendUsd = 0; runSpendCalls = 0;
 
   // Stop a run that is failing systemically. A rejected key, an exhausted
   // balance or a provider outage fails identically on every company, so
@@ -4302,6 +4733,7 @@ async function startEnrich() {
         // Save whatever we already enriched before bailing out — those lookups
         // were paid for and must not be lost just because the quota ran out.
         await flushEnrichSaves();
+        await flushUsage();
         document.getElementById('enrich-progress').innerHTML =
           `⚠ Daily Gemini quota reached (free tier). ${succeeded} of ${selRows.length} enriched. ` +
           `Resets at midnight Pacific time, or switch to SerpAPI / another Gemini key.`;
@@ -4329,6 +4761,7 @@ async function startEnrich() {
       if (consecutiveFailures >= FAILURE_STREAK_LIMIT) {
         // Save whatever did work before stopping — those lookups were paid for.
         await flushEnrichSaves();
+        await flushUsage();
         const done = i + 1;
         document.getElementById('enrich-progress').innerHTML =
           `⚠ Stopped after ${consecutiveFailures} failures in a row — ` +
@@ -4358,6 +4791,7 @@ async function startEnrich() {
   // Flush any partial batch left at the end of the run, then refresh the queue
   // so the newly enriched companies appear for review.
   await flushEnrichSaves();
+  await flushUsage();
   await loadQueue();
 
   // Report what happened, not how many rows were attempted. Failures and
@@ -4367,6 +4801,9 @@ async function startEnrich() {
   const parts = [`${succeeded} of ${selRows.length} enriched`];
   if (failed)  parts.push(`${failed} failed`);
   if (unsaved) parts.push(`${unsaved} not yet saved to the database`);
+  // "recorded", not "spent": a call killed by the function timeout is billed
+  // by the provider and never reaches us to be logged.
+  if (runSpendCalls) parts.push(`${formatUsd(runSpendUsd)} recorded across ${runSpendCalls} call${runSpendCalls === 1 ? '' : 's'}`);
 
   const prog = document.getElementById('enrich-progress');
   if (failed || unsaved) {
@@ -4452,6 +4889,8 @@ function setView(v) {
   currentView = v;
   document.getElementById('layout').hidden = (v !== 'home');
   document.getElementById('queueView').hidden = (v !== 'queue');
+  const sv = document.getElementById('spendView');
+  if (sv) sv.hidden = (v !== 'spend');
   refreshNavActive();
   if (typeof refreshEnrichedTools === 'function') refreshEnrichedTools();
 
@@ -4464,6 +4903,8 @@ function setView(v) {
     updateSelectedUI();
     fetchPage(1);
   }
+
+  if (v === 'spend') loadSpendView();
 
   if (v === 'queue') {
     // Refresh from the database each time the tab opens, so a teammate's
@@ -4479,8 +4920,8 @@ function setView(v) {
 // switches that sidebar select back to "All companies", the tab de-highlights
 // on its own and there is no stale-highlight bug to chase.
 function refreshNavActive() {
-  const active = currentView === 'queue'
-    ? 'queue'
+  const active = currentView === 'queue' ? 'queue'
+    : currentView === 'spend' ? 'spend'
     : (enrichedFilterMode === 'enriched' && changeFilterMode === 'any'
         ? 'enriched' : 'home');
   document.querySelectorAll('.navbtn').forEach(b =>
@@ -5184,6 +5625,11 @@ async function enrichOneOpenRouter(row, retryCount = 0) {
     await sleep(5000);
     return enrichOneOpenRouter(row, retryCount + 1);
   }
+
+  // Log the charge before deciding whether the result is usable. A response
+  // we cannot use has still been billed, and leaving it out of the spend log
+  // would understate the bill precisely when a run is going wrong.
+  if (json && json.usage) await logUsage(row.uen, 'openrouter', json.usage);
 
   if (!json) throw new Error(`openrouter-enrich returned ${r.status}`);
   if (!json.ok) throw new Error(json.error || 'OpenRouter enrichment failed');

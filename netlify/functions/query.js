@@ -733,6 +733,121 @@ exports.handler = async function(event) {
       //
       // Cheap by construction — data_versions holds one row per release, and
       // the badge breakdown reads the partial index, not the companies table.
+      // What the paid lookups actually cost, over a date range.
+      //
+      // Reads usage_log, which has one row per API CALL — including calls that
+      // were billed but produced no usable result. A total built from the
+      // enrichments table instead would quietly omit those and read lower than
+      // the real bill. See migration 008.
+      //
+      // The response deliberately separates what it knows from what it does
+      // not: `cost_usd` sums only rows where the provider reported a charge,
+      // and `calls_without_cost` counts the rest, so the UI can say how much of
+      // the picture is missing rather than implying the total is complete.
+      // Cost broken down by day, for the Spend view's chart and table.
+      //
+      // Bucketing happens in SQL (substr on the ISO timestamp) rather than in
+      // the browser, because the browser only ever holds one page of rows and
+      // the whole point of this view is the total across all of them.
+      //
+      // Days with no calls are NOT returned — filling the gaps is the caller's
+      // job, since only it knows the range the user asked for. A chart that
+      // silently omits a zero day would misread as "no data" rather than
+      // "nothing spent".
+      if (req.mode === 'spend_daily') {
+        const from = typeof req.from === 'string' ? req.from : null;
+        const to   = typeof req.to   === 'string' ? req.to   : null;
+
+        const where = [];
+        const args = [];
+        if (from) { where.push('called_at >= ?'); args.push(from); }
+        if (to)   { where.push('called_at < ?');  args.push(to); }
+        const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+        const results = await executePipeline([
+          { sql: `SELECT substr(called_at, 1, 10) AS day,
+                         COUNT(*)      AS calls,
+                         SUM(cost_usd) AS cost_usd,
+                         SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed_calls
+                    FROM usage_log ${clause}
+                GROUP BY day ORDER BY day ASC LIMIT 400`, args },
+          // The most recent calls, for the detail table. Capped: this is a
+          // "what happened lately" list, not a ledger export.
+          { sql: `SELECT u.called_at, u.uen, u.engine, u.model_used, u.cost_usd,
+                         u.prompt_tokens, u.completion_tokens, u.outcome,
+                         c.entity_name
+                    FROM usage_log u
+               LEFT JOIN companies c ON c.uen = u.uen
+                   ${clause ? clause.replace(/called_at/g, 'u.called_at') : ''}
+                ORDER BY u.called_at DESC LIMIT 100`, args },
+        ]);
+
+        const num = v => (v === null || v === undefined) ? null : Number(v);
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({
+          ok: true,
+          from, to,
+          days: reshapeRows(results[0]).map(r => ({
+            day: r.day,
+            calls: Number(r.calls),
+            failed_calls: Number(r.failed_calls) || 0,
+            cost_usd: num(r.cost_usd),
+          })),
+          recent: reshapeRows(results[1]).map(r => ({
+            called_at: r.called_at,
+            uen: r.uen,
+            entity_name: r.entity_name || null,
+            engine: r.engine,
+            model_used: r.model_used,
+            cost_usd: num(r.cost_usd),
+            prompt_tokens: num(r.prompt_tokens),
+            completion_tokens: num(r.completion_tokens),
+            outcome: r.outcome,
+          })),
+        })};
+      }
+
+      if (req.mode === 'spend_summary') {
+        const from = typeof req.from === 'string' ? req.from : null;
+        const to   = typeof req.to   === 'string' ? req.to   : null;
+
+        const where = [];
+        const args = [];
+        if (from) { where.push('called_at >= ?'); args.push(from); }
+        if (to)   { where.push('called_at < ?');  args.push(to); }
+        const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+        const results = await executePipeline([
+          { sql: `SELECT COUNT(*)                                      AS calls,
+                         SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) AS calls_without_cost,
+                         SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed_calls,
+                         SUM(cost_usd)                                 AS cost_usd,
+                         SUM(prompt_tokens)                            AS prompt_tokens,
+                         SUM(completion_tokens)                        AS completion_tokens
+                    FROM usage_log ${clause}`, args },
+          { sql: `SELECT engine,
+                         COUNT(*)      AS calls,
+                         SUM(cost_usd) AS cost_usd
+                    FROM usage_log ${clause}
+                GROUP BY engine ORDER BY calls DESC`, args },
+        ]);
+
+        const t = reshapeRows(results[0])[0] || {};
+        const num = v => (v === null || v === undefined) ? null : Number(v);
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({
+          ok: true,
+          from, to,
+          calls:              num(t.calls) || 0,
+          failed_calls:       num(t.failed_calls) || 0,
+          calls_without_cost: num(t.calls_without_cost) || 0,
+          cost_usd:           num(t.cost_usd),
+          prompt_tokens:      num(t.prompt_tokens),
+          completion_tokens:  num(t.completion_tokens),
+          by_engine: reshapeRows(results[1]).map(r => ({
+            engine: r.engine, calls: Number(r.calls), cost_usd: num(r.cost_usd)
+          })),
+        })};
+      }
+
       if (req.mode === 'change_summary') {
         const results = await executePipeline([
           { sql: `SELECT month, loaded_at, companies_total, changes_recorded

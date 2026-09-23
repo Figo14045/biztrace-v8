@@ -200,6 +200,37 @@ function buildExportedStatement(rec, nowIso) {
   };
 }
 
+// Record one paid API call.
+//
+// This is an INSERT, not an upsert: usage_log has one row per call, and two
+// calls for the same company are two charges. Deduplicating by uen would hide
+// exactly the double-spend we want to be able to see.
+//
+// It writes whether or not the lookup produced a usable result, because
+// OpenRouter bills for the generation either way — see migration 008.
+function buildUsageStatement(rec, nowIso) {
+  const num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const int = v => (v === null || v === undefined || v === '') ? null : parseInt(v, 10) || null;
+  const OUTCOMES = new Set(['ok', 'failed']);
+
+  return {
+    sql: `INSERT INTO usage_log
+            (called_at, uen, engine, model_used, cost_usd,
+             prompt_tokens, completion_tokens, outcome)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      nowIso,
+      rec.uen || null,
+      String(rec.engine || 'unknown').slice(0, 40),
+      rec.model_used ? String(rec.model_used).slice(0, 120) : null,
+      num(rec.cost_usd),
+      int(rec.prompt_tokens),
+      int(rec.completion_tokens),
+      OUTCOMES.has(rec.outcome) ? rec.outcome : 'ok',
+    ]
+  };
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
@@ -229,7 +260,7 @@ exports.handler = async function (event) {
 
   // Allowlisted rather than passed through: an unrecognised action falls back
   // to 'save', which is the only one that validates its whole payload.
-  const ACTIONS = new Set(['approve', 'exported', 'save']);
+  const ACTIONS = new Set(['approve', 'exported', 'save', 'usage']);
   const action = ACTIONS.has(req.action) ? req.action : 'save';
   const records = Array.isArray(req.records) ? req.records : [];
 
@@ -243,7 +274,11 @@ exports.handler = async function (event) {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ ok: false, error: 'Too many records in one call (max 200)' }) };
   }
 
-  const valid = records.filter(r => r && typeof r.uen === 'string' && r.uen.trim());
+  // A usage row is about a CALL, so it is still worth recording when the uen
+  // is missing; every other action addresses a specific enrichment row.
+  const valid = action === 'usage'
+    ? records.filter(r => r && typeof r === 'object')
+    : records.filter(r => r && typeof r.uen === 'string' && r.uen.trim());
   if (!valid.length) {
     return { statusCode: 400, headers: CORS, body: JSON.stringify({ ok: false, error: 'No records with a valid uen' }) };
   }
@@ -255,6 +290,7 @@ exports.handler = async function (event) {
     statements = valid.map(rec => {
       if (action === 'approve')  return buildApproveStatement(rec, nowIso);
       if (action === 'exported') return buildExportedStatement(rec, nowIso);
+      if (action === 'usage')    return buildUsageStatement(rec, nowIso);
       return buildSaveStatement(rec, nowIso);
     });
   } catch (e) {
