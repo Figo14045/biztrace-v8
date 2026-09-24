@@ -29,6 +29,14 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` attribute must win over any layout rule.
+   The browser's own [hidden]{display:none} is an author-overridable default,
+   so a rule like #signin{display:flex} or .user-chip{display:inline-flex}
+   silently beats it — the element keeps its `hidden` attribute and stays on
+   screen. That is exactly what happened to the sign-in overlay: the login
+   succeeded, the app loaded behind it, and the panel never went away. */
+[hidden] { display: none !important; }
+
 /* ── Sign in ───────────────────────────────────────────────────────────
    Covers the app until the server confirms a session. Plain on purpose:
    this screen has one job and no data on it. */
