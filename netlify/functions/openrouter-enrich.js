@@ -1,3 +1,4 @@
+const auth = require('./lib/auth.js');
 // BizTrace V8 — AI Enrichment Proxy (OpenRouter)
 //
 // Mirrors ai-enrich.js (Gemini) and claude-enrich.js in behaviour, but routes
@@ -253,6 +254,12 @@ exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
   }
+
+  // Every request must be signed in. This is the real gate: without it these
+  // endpoints answered anyone on the internet with a curl command, and a login
+  // on the page would not have changed that. See lib/auth.js.
+  const __gate = auth.requireAuth(event, auth.corsHeaders(event));
+  if (__gate.response) return __gate.response;
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, headers: CORS, body: JSON.stringify({ ok: false, error: 'Method not allowed' }) };
   }

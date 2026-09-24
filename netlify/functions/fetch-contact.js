@@ -1,3 +1,4 @@
+const auth = require('./lib/auth.js');
 // BizTrace V7 — Smart Contact Fetcher
 // Logic:
 // 1. Receive organic_results from SerpAPI + company name + UEN
@@ -380,6 +381,13 @@ exports.handler = async function(event) {
       body: ''
     };
   }
+
+  // Every request must be signed in. This is the real gate: without it these
+  // endpoints answered anyone on the internet with a curl command, and a login
+  // on the page would not have changed that. See lib/auth.js.
+  const __gate = auth.requireAuth(event, auth.corsHeaders(event));
+  if (__gate.response) return __gate.response;
+
 
   const startedAt = Date.now();
   const timeLeft = () => TOTAL_FETCH_BUDGET_MS - (Date.now() - startedAt);

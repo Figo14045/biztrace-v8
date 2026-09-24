@@ -1,3 +1,4 @@
+const auth = require('./lib/auth.js');
 // BizTrace V8 — Turso Proxy
 //
 // Receives structured query requests from the BizTrace frontend, builds
@@ -678,6 +679,12 @@ exports.handler = async function(event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS, body: '' };
   }
+
+  // Every request must be signed in. This is the real gate: without it these
+  // endpoints answered anyone on the internet with a curl command, and a login
+  // on the page would not have changed that. See lib/auth.js.
+  const __gate = auth.requireAuth(event, auth.corsHeaders(event));
+  if (__gate.response) return __gate.response;
 
   // Smoke test endpoint (kept from Chunk 1)
   if (event.httpMethod === 'GET') {

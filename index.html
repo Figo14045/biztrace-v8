@@ -29,6 +29,32 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Sign in ───────────────────────────────────────────────────────────
+   Covers the app until the server confirms a session. Plain on purpose:
+   this screen has one job and no data on it. */
+#signin { position:fixed; inset:0; z-index:9999; display:flex;
+          align-items:center; justify-content:center; background:rgba(15,17,23,.92); }
+.signin-card { background:var(--surface); border:1px solid var(--border);
+               border-radius:var(--radius); padding:28px 26px; width:min(360px, calc(100vw - 32px));
+               display:flex; flex-direction:column; gap:12px; }
+.signin-card h2 { font-size:19px; font-weight:600; letter-spacing:-0.01em; }
+.signin-sub { color:var(--text3); font-size:12px; line-height:1.5; margin-bottom:2px; }
+#signin-password { background:var(--bg); border:1px solid var(--border2); color:var(--text);
+                   border-radius:var(--radius); padding:9px 11px; font-size:14px; font-family:var(--sans); }
+#signin-password:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+.signin-btn { background:var(--accent); color:#fff; border:none; border-radius:var(--radius);
+              padding:9px 14px; font-size:13px; font-weight:600; cursor:pointer; font-family:var(--sans); }
+.signin-btn:hover { background:var(--accent2); }
+.signin-btn:disabled { opacity:.6; cursor:default; }
+.signin-err { color:var(--red); font-size:12px; min-height:16px; line-height:1.4; }
+
+.user-chip { display:inline-flex; align-items:center; gap:7px; margin-left:12px;
+             font-family:var(--mono); font-size:10px; color:var(--text3);
+             border:1px solid var(--border); border-radius:var(--radius); padding:3px 8px; }
+.user-chip button { background:none; border:none; color:var(--text3); cursor:pointer;
+                    font-family:var(--mono); font-size:10px; padding:0; text-decoration:underline; }
+.user-chip button:hover { color:var(--accent2); }
+
 /* ── Spend view ────────────────────────────────────────────────────────
    Deliberately quiet. This is a reference screen people open to answer one
    question ("what did today cost?"), not a dashboard to be admired, so the
@@ -1061,11 +1087,29 @@ body.show-advanced .advanced-only { display: block; }
 </head>
 <body>
 
+<!-- Sign in.
+     Shown until the server confirms a session. The real check is server-side
+     (netlify/functions/lib/auth.js) — every function rejects an
+     unauthenticated request, so this screen is a convenience, not the lock. -->
+<div id="signin" hidden>
+  <form class="signin-card" onsubmit="doSignIn(event)">
+    <h2>BizTrace</h2>
+    <p class="signin-sub">Company data and enrichment results. Sign in to continue.</p>
+    <input type="password" id="signin-password" autocomplete="current-password"
+           placeholder="Password" aria-label="Password">
+    <div class="signin-err" id="signin-error" role="alert"></div>
+    <button type="submit" class="signin-btn" id="signin-btn">Sign in</button>
+  </form>
+</div>
+
+<div id="app-shell">
+
 <!-- Header -->
 <div id="header">
   <h1>BizTrace</h1>
   <span class="pill">V8</span>
   <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">ACRA Lead Intelligence</span>
+  <span id="user-chip" class="user-chip" hidden><span></span><button onclick="signOut()" title="Sign out">Sign out</button></span>
   <nav id="viewnav">
     <button class="navbtn active" data-view="home" onclick="setView('home')">Home</button>
     <button class="navbtn" data-view="queue" onclick="setView('queue')">
@@ -1891,6 +1935,121 @@ let addressDensity = new Map();  // "postal|level|unit" → count of companies s
 // ══════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// SIGN IN
+// ══════════════════════════════════════════════════════════════
+// The gate is server-side (netlify/functions/lib/auth.js) — every function
+// rejects an unauthenticated request. This is only the screen that collects
+// the password and the handling for being signed out mid-session.
+//
+// So a bug here cannot expose data: the worst case is an awkward screen, not
+// an open database. That is the whole reason the check was put in the
+// functions rather than here.
+
+let currentUser = null;
+
+function showSignIn(message) {
+  document.getElementById('signin-error').textContent = message || '';
+  document.getElementById('signin').hidden = false;
+  document.getElementById('app-shell').style.filter = 'blur(3px)';
+  const f = document.getElementById('signin-password');
+  f.value = '';
+  setTimeout(() => f.focus(), 50);
+}
+
+function hideSignIn() {
+  document.getElementById('signin').hidden = true;
+  document.getElementById('app-shell').style.filter = '';
+}
+
+async function doSignIn(ev) {
+  if (ev) ev.preventDefault();
+  const btn = document.getElementById('signin-btn');
+  const pw = document.getElementById('signin-password').value;
+  if (!pw) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  document.getElementById('signin-error').textContent = '';
+
+  try {
+    const r = await fetch('/.netlify/functions/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const j = await r.json().catch(() => ({}));
+
+    if (!r.ok || !j.ok) {
+      // A server that has no passwords configured is a deployment problem, not
+      // a wrong password, and saying so saves an hour of confusion.
+      const msg = j.code === 'auth_not_configured'
+        ? 'Sign-in is not set up on the server yet — the environment variables are missing.'
+        : (j.error || 'Could not sign in');
+      document.getElementById('signin-error').textContent = msg;
+      return;
+    }
+
+    currentUser = j.user;
+    hideSignIn();
+    refreshUserChip();
+    // Load the data that could not be fetched while signed out.
+    boot();
+  } catch (e) {
+    document.getElementById('signin-error').textContent = `Could not reach the server: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+}
+
+async function signOut() {
+  try {
+    await fetch('/.netlify/functions/login', { method: 'DELETE' });
+  } catch (e) { /* signing out locally still matters */ }
+  currentUser = null;
+  refreshUserChip();
+  showSignIn('Signed out.');
+}
+
+function refreshUserChip() {
+  const el = document.getElementById('user-chip');
+  if (!el) return;
+  el.hidden = !currentUser;
+  if (currentUser) el.firstChild.textContent = currentUser === 'admin' ? 'admin' : 'staff';
+}
+
+// Called on load: is this browser already signed in?
+async function checkSession() {
+  try {
+    const r = await fetch('/.netlify/functions/login', { method: 'GET' });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) { currentUser = j.user; refreshUserChip(); return true; }
+    showSignIn(j.code === 'auth_not_configured'
+      ? 'Sign-in is not set up on the server yet — the environment variables are missing.'
+      : '');
+    return false;
+  } catch (e) {
+    showSignIn(`Could not reach the server: ${e.message}`);
+    return false;
+  }
+}
+
+// A 401 from any endpoint means the session expired or was revoked mid-use.
+// Every fetch of app data routes through here so that shows the sign-in screen
+// instead of a confusing empty table or a generic error.
+//
+// Returns true if the caller should stop what it was doing.
+function handleAuthFailure(status, json) {
+  if (status !== 401) return false;
+  currentUser = null;
+  refreshUserChip();
+  showSignIn(json && json.code === 'auth_not_configured'
+    ? 'Sign-in is not set up on the server yet — the environment variables are missing.'
+    : 'Your session expired. Please sign in again.');
+  return true;
+}
+
 async function init() {
   loadSerpKey();
   loadGeminiKey();
@@ -5911,7 +6070,13 @@ document.addEventListener('keydown', e => {
 // ══════════════════════════════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════════════════════════════
-init();
+// Nothing loads until the server says this browser is signed in. Data fetches
+// would all 401 anyway; asking first means the user sees a sign-in screen
+// rather than a wall of failures.
+async function boot() { await init(); }
+
+checkSession().then(ok => { if (ok) boot(); });
 </script>
+</div><!-- /app-shell -->
 </body>
 </html>

@@ -15,6 +15,26 @@
 // No dependencies — uses node:sqlite, built into Node. Run it with:
 //   node scripts/test-has-auditor.js
 
+// Every function now requires a session (see scripts/test-auth.js). These
+// tests are about SQL, not access control, so they sign in once and send the
+// cookie with each call.
+//
+// This has to run before ANY require: lib/auth.js reads its environment once,
+// at import time, and query.js imports it — so setting these later would leave
+// the already-cached module with no secret.
+process.env.SESSION_SECRET = 'test-secret-for-offline-tests';
+// auth.js snapshots BOTH the secret and the password hashes at import time, so
+// the hash has to exist in the environment before the copy that query.js uses
+// is loaded. Generate it, then drop the module from the cache so the next
+// import — query.js's — sees a fully configured environment.
+{
+  const a = require('../netlify/functions/lib/auth.js');
+  process.env.STAFF_PASSWORD_HASH = a.hashPassword('offline-test-password');
+  delete require.cache[require.resolve('../netlify/functions/lib/auth.js')];
+}
+const __auth = require('../netlify/functions/lib/auth.js');
+const __cookie = `bt_session=${__auth.signSession('staff')}`;
+
 const mockTurso = require('./lib/mock-turso.js');
 
 const SCHEMA = `
@@ -45,7 +65,7 @@ async function main() {
 
   const mock = mockTurso.install(SCHEMA);
   const { handler } = require('../netlify/functions/query.js');
-  const post = body => handler({ httpMethod: 'POST', body: JSON.stringify(body) });
+  const post = body => handler({ httpMethod: 'POST', headers: { cookie: __cookie }, body: JSON.stringify(body) });
   const uensOf = json => JSON.stringify((json.rows || []).map(r => r.uen).sort());
 
   const withCol = {
