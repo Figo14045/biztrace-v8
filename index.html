@@ -4921,6 +4921,26 @@ async function startEnrich() {
 
 let currentView = 'home';
 
+// Exactly one view is on screen, decided in one place.
+//
+// This used to be two lines in setView plus a separate line in
+// showEnrichedRecords, and the Enriched Records path returns BEFORE setView's
+// lines run — so going Spend -> Enriched Records showed the table without ever
+// hiding the Spend panel, and the two rendered on top of each other. Adding a
+// fourth view would have meant remembering to hide it in two places.
+//
+// Enriched Records is not a view of its own: it is the home table with the
+// enrichment filter pinned, so it maps to 'home' here.
+const VIEW_ELEMENTS = { home: 'layout', spend: 'spendView' };
+
+function showOnlyView(v) {
+  const target = v === 'enriched' ? 'home' : v;
+  for (const [name, id] of Object.entries(VIEW_ELEMENTS)) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = (name !== target);
+  }
+}
+
 function setView(v) {
   // Moving away from Enriched Records clears its date/decision filters.
   // They are invisible outside that view, and an invisible filter quietly
@@ -4969,9 +4989,7 @@ function setView(v) {
   }
 
   currentView = v;
-  document.getElementById('layout').hidden = (v !== 'home');
-  const sv = document.getElementById('spendView');
-  if (sv) sv.hidden = (v !== 'spend');
+  showOnlyView(v);
   refreshNavActive();
   if (typeof refreshEnrichedTools === 'function') refreshEnrichedTools();
 
@@ -5013,7 +5031,7 @@ function refreshNavActive() {
 // us on that path, not just a cosmetic reset.
 async function showEnrichedRecords() {
   currentView = 'home';
-  document.getElementById('layout').hidden = false;
+  showOnlyView('enriched');
 
   // Clear every other filter so this is a clean "show me everything enriched".
   clearAllFilters({ silent: true });
