@@ -37,6 +37,21 @@
    succeeded, the app loaded behind it, and the panel never went away. */
 [hidden] { display: none !important; }
 
+/* The sign-in overlay blurs the app behind it, which needs a single element to
+   blur — hence this wrapper. But body is a flex column and #layout claims the
+   remaining height with flex:1, so an unstyled wrapper between them breaks that
+   chain: #layout's flex:1 resolves against a block that shrinks to its content,
+   and the sidebar and table collapse to a few hundred pixels tall.
+   The wrapper therefore has to take over the role body was playing. */
+#app-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;      /* a flex child defaults to min-height:auto, which would
+                         refuse to shrink and push the page past the viewport */
+  overflow: hidden;
+}
+
 /* ── Sign in ───────────────────────────────────────────────────────────
    Covers the app until the server confirms a session. Plain on purpose:
    this screen has one job and no data on it. */
@@ -67,7 +82,12 @@
    Deliberately quiet. This is a reference screen people open to answer one
    question ("what did today cost?"), not a dashboard to be admired, so the
    figures carry the page and everything around them stays recessive. */
-#spendView { padding:22px 26px; overflow-y:auto; }
+#spendView {
+  padding:22px 26px;
+  /* A flex child of #app-shell: claim the space below the header and scroll
+     inside it, rather than sizing to content and pushing the page. */
+  flex:1; min-height:0; overflow-y:auto;
+}
 .sp-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:4px; }
 .sp-head h2 { font-size:16px; font-weight:600; letter-spacing:-0.01em; }
 .sp-sub { color:var(--text3); font-size:12px; max-width:70ch; line-height:1.5; }
