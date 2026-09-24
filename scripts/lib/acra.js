@@ -155,6 +155,32 @@ function isKnown(status) {
          status === 'Under Judicial Management';
 }
 
+// Does this field hold an actual value?
+//
+// ACRA writes the literal string 'na' where it has nothing, so a plain
+// inequality test treats "we now know the unit number" as a change of unit
+// number. Measured between the August and September releases across 482,118
+// companies: of 6,552 address differences, 322 were 'na' -> a real value and
+// 311 were a real value -> 'na'. Together 9.6% of the "Moved" badges would
+// have been companies that did not move — one of them, 196600149M, would have
+// got three change rows for a single backfill of level, unit and building.
+function hasValue(v) {
+  if (v === null || v === undefined) return false;
+  const s = String(v).trim();
+  return s !== '' && s.toLowerCase() !== 'na';
+}
+
+// A field genuinely changed: both sides hold a value, and they differ.
+//
+// Appearing and disappearing are real events, but they are not MOVES, and the
+// badge says moved. They still reach the database through the row refresh,
+// which compares all 53 columns — this only governs what earns a changelog
+// row and a badge.
+function isRealFieldChange(before, after) {
+  if (!hasValue(before) || !hasValue(after)) return false;
+  return String(before).trim() !== String(after).trim();
+}
+
 // Which change type a status transition represents.
 // Order matters: a Gazetted → Struck Off transition is a strike-off, not a
 // gazette, and the dead test must therefore come first.
@@ -309,6 +335,8 @@ async function readRelease(dir, onRow, onFile) {
 }
 
 module.exports = {
+  hasValue,
+  isRealFieldChange,
   ACRA_COLUMNS, ADDRESS_FIELDS, STATUS_FIELD,
   CHANGE_TYPES, BADGE_PRIORITY,
   LIVE_STATUSES, DEAD_STATUSES, GAZETTED_STATUS,

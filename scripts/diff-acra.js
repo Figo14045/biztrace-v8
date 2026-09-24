@@ -37,6 +37,7 @@ const {
   ADDRESS_FIELDS, STATUS_FIELD, ACRA_COLUMNS,
   CHANGE_TYPES, BADGE_PRIORITY,
   isKnown, classifyStatusChange, readRelease,
+  isRealFieldChange,
 } = require('./lib/acra');
 
 const SEP = '\x1f';
@@ -195,8 +196,13 @@ async function main() {
       ADDRESS_FIELDS.forEach((f, i) => {
         const before = prevAddress[i];
         const after = values[index[f]];
-        if (before !== after) {
+        // Only a value-to-different-value change counts as a move. A field
+        // appearing or disappearing is ACRA's record improving or degrading,
+        // not the company relocating — see isRealFieldChange.
+        if (isRealFieldChange(before, after)) {
           rowChanges.push({ type: 'ADDRESS_CHANGED', field: f, old: before, new: after });
+        } else if (before !== after) {
+          stats.addressNoise = (stats.addressNoise || 0) + 1;
         }
       });
 
