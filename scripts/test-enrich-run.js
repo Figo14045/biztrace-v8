@@ -166,11 +166,15 @@ function testApproveReporting() {
   check('handler does not report row counts for save (an upsert always writes)',
         !/body\.missing[\s\S]{0,80}action === 'save'/.test(SAVE));
 
-  const approvalSrc = extractFunction(HTML, 'persistApproval');
+  // The approval UI was removed when the team dropped the review step, so
+  // markExported is now the only UPDATE-only path from the browser — and it
+  // carries the same risk: stamping nothing looks identical to stamping
+  // everything, and unstamped rows come back in the next export.
+  const exportedSrc = extractFunction(HTML, 'markExported');
   check('client treats a missing row as a failure, not a success',
-        /j\.missing > 0/.test(approvalSrc) && /throw new Error/.test(approvalSrc));
-  check('client shows the reason rather than a vague maybe',
-        /Could not save approval — \$\{e\.message\}/.test(approvalSrc));
+        /j\.missing > 0/.test(exportedSrc) && /throw new Error/.test(exportedSrc));
+  check('the failure names the duplicate-rows consequence',
+        /may appear in the next export/.test(exportedSrc));
 }
 
 async function main() {

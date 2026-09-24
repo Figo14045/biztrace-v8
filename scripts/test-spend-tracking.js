@@ -268,6 +268,18 @@ console.log('\nOpenRouter account panel');
   check('the panel failing does not break the Spend view',
         /card\.hidden = true/.test(fn) && /catch/.test(fn));
 
+  // The reconciliation line is rendered fresh each time the range changes.
+  // insertAdjacentHTML appended instead of replacing, so every click of
+  // Today / 7 days / 30 days left another identical paragraph on the page.
+  check('the reconciliation line is replaced, not appended',
+        // Match the CALL, not the word: the comment above the fix names the
+        // old API, and a bare word match flagged that as the bug.
+        /recon\.innerHTML = ''/.test(fn) && !/insertAdjacentHTML\s*\(/.test(fn),
+        'appending would stack a duplicate on every filter click');
+  check('it renders into its own container',
+        /getElementById\('sp-recon'\)/.test(fn));
+  check('the container exists in the markup', /id="sp-recon"/.test(HTML));
+
   // The comparison window must match how OpenRouter buckets its month, or the
   // two sides describe different periods for the first hours of each day.
   const ms = extractFunction(HTML, 'utcMonthStart');

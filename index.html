@@ -139,121 +139,6 @@
 .sp-fail { color:var(--red); font-family:var(--mono); font-size:10px; }
 .sp-empty { color:var(--text3); font-size:12px; padding:18px 0; }
 
-/* ── Suggestion Queue ─────────────────────────────────────────────────── */
-#viewnav { display:flex; gap:4px; margin-left:18px; }
-.navbtn {
-  background:none; border:1px solid transparent; color:var(--text3);
-  font-family:var(--mono); font-size:11px; letter-spacing:0.06em;
-  padding:5px 12px; border-radius:var(--radius); cursor:pointer;
-}
-.navbtn:hover { color:var(--text2); }
-.navbtn.active { color:var(--text); background:var(--surface2); border-color:var(--border); }
-.navcount {
-  background:var(--accent); color:#fff; font-size:9px; padding:1px 5px;
-  border-radius:8px; margin-left:5px;
-}
-.navcount.zero { background:var(--border2); color:var(--text3); }
-
-/* The UA rule [hidden]{display:none} is specificity (0,1,0); an #id rule is
-   (1,0,0) and beats it. Without this, display:flex kept the queue permanently
-   on screen, sitting on top of the home view. Home is the default; the queue
-   only ever appears when explicitly switched to. */
-#queueView[hidden], #layout[hidden] { display: none !important; }
-#queueView { padding:0; height:calc(100vh - 48px); display:flex; flex-direction:column; }
-#queue-bar {
-  display:flex; align-items:center; gap:20px; padding:12px 22px;
-  border-bottom:1px solid var(--border); background:var(--surface);
-}
-.qstat { font-family:var(--mono); font-size:10px; color:var(--text3); letter-spacing:0.08em; }
-/* Queue bar toggles. Small and quiet — they change what the list shows, they
-   are not primary actions. */
-.qtoggle {
-  display:flex; align-items:center; gap:5px; cursor:pointer;
-  font-family:var(--mono); font-size:10px; color:var(--text3);
-  letter-spacing:0.04em; white-space:nowrap;
-}
-.qtoggle:hover { color:var(--text2); }
-.qtoggle input { accent-color:var(--accent); cursor:pointer; margin:0; }
-/* When a result was found, and whether it has already been handed out. */
-.qwhen { font-family:var(--mono); font-size:10px; color:var(--text3); }
-.qexported {
-  display:inline-block; margin-left:8px; padding:1px 6px; border-radius:3px;
-  font-family:var(--mono); font-size:9px; letter-spacing:0.05em;
-  background:var(--surface2); color:var(--text3); border:1px solid var(--border2);
-  cursor:default;
-}
-.qnum { font-size:17px; color:var(--text); margin-right:6px; font-weight:600; }
-.qnum.ok { color:var(--green); } .qnum.no { color:var(--text3); }
-.qbtn {
-  background:var(--accent); color:#fff; border:none; border-radius:var(--radius);
-  padding:7px 14px; font-family:var(--mono); font-size:11px; cursor:pointer;
-}
-.qbtn.ghost { background:none; border:1px solid var(--border2); color:var(--text2); }
-.qbtn:hover { filter:brightness(1.12); }
-
-#queue-list { flex:1; overflow-y:auto; padding:18px 22px 60px; }
-.qcard {
-  background:var(--surface); border:1px solid var(--border);
-  border-radius:8px; margin-bottom:14px; overflow:hidden; max-width:900px;
-}
-.qcard.approved { border-color:rgba(34,197,94,0.45); }
-.qcard.rejected { opacity:0.5; }
-.qcard.nosuggest { opacity:0.6; }
-.qcard-head { padding:13px 16px; border-bottom:1px solid var(--border); }
-.qname { font-size:14px; font-weight:600; color:var(--text); }
-.qmeta { font-family:var(--mono); font-size:10px; color:var(--text3); margin-top:4px; line-height:1.7; }
-.qwarn { font-family:var(--mono); font-size:10px; color:var(--amber); margin-top:6px; }
-.qstatus {
-  float:right; font-family:var(--mono); font-size:9px; letter-spacing:0.08em;
-  padding:3px 9px; border-radius:10px; border:1px solid var(--border2); color:var(--text3);
-}
-.qstatus.approved { color:var(--green); border-color:rgba(34,197,94,0.5); }
-.qstatus.rejected { color:var(--red); border-color:rgba(239,68,68,0.4); }
-.qstatus.pending  { color:var(--amber); border-color:rgba(245,158,11,0.4); }
-
-.qfield { display:flex; gap:14px; padding:11px 16px; border-bottom:1px solid rgba(42,48,69,0.5); }
-.qlabel {
-  font-family:var(--mono); font-size:9px; color:var(--text3);
-  letter-spacing:0.1em; width:64px; flex-shrink:0; padding-top:2px;
-}
-.qval { flex:1; min-width:0; }
-.qval a { color:var(--accent2); text-decoration:none; font-size:12px; word-break:break-all; }
-.qval a:hover { text-decoration:underline; }
-.qplain { font-size:12px; color:var(--text); font-family:var(--mono); }
-.qnone  { font-size:12px; color:var(--text3); font-style:italic; }
-.qwhy { font-size:11px; color:var(--text2); margin-top:5px; line-height:1.6; }
-.qsrc { font-family:var(--mono); font-size:9px; color:var(--text3); margin-top:4px; }
-.qsrc a { font-size:9px; color:var(--text3); }
-.qconf {
-  font-family:var(--mono); font-size:9px; letter-spacing:0.08em;
-  padding:2px 7px; border-radius:3px; flex-shrink:0; align-self:flex-start;
-}
-.qconf.HIGH   { background:rgba(34,197,94,0.15);  color:var(--green); }
-.qconf.MEDIUM { background:rgba(245,158,11,0.15); color:var(--amber); }
-.qconf.LOW    { background:rgba(239,68,68,0.13);  color:var(--red); }
-.qconf.NONE   { background:var(--surface2); color:var(--text3); }
-.qactions { padding:11px 16px; display:flex; gap:9px; justify-content:flex-end; }
-.qact {
-  border:1px solid var(--border2); background:none; color:var(--text2);
-  font-family:var(--mono); font-size:11px; padding:6px 15px;
-  border-radius:var(--radius); cursor:pointer;
-}
-.qact.approve:hover { background:rgba(34,197,94,0.15); color:var(--green); border-color:var(--green); }
-.qact.reject:hover  { background:rgba(239,68,68,0.13); color:var(--red);  border-color:var(--red); }
-.qact.on-approve { background:rgba(34,197,94,0.2); color:var(--green); border-color:var(--green); }
-.qact.on-reject  { background:rgba(239,68,68,0.18); color:var(--red);  border-color:var(--red); }
-.qempty { color:var(--text3); font-family:var(--mono); font-size:12px; padding:50px; text-align:center; line-height:2; }
-
-body {
-  font-family: var(--sans);
-  background: var(--bg);
-  color: var(--text);
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 /* ── Header ── */
 #header {
   display: flex;
@@ -1109,15 +994,7 @@ body.show-advanced .advanced-only { display: block; }
 .et-check:hover { color:var(--text2); }
 .et-check input { accent-color:var(--accent); cursor:pointer; margin:0; }
 
-/* Approval control in the table. Colour follows the state so a column of
-   these is scannable without reading every one. */
-.apsel {
-  background:var(--surface2); color:var(--text2); border:1px solid var(--border2);
-  border-radius:4px; padding:2px 4px; font-family:var(--mono); font-size:10px; cursor:pointer;
 }
-.apsel.ap-approved { color:var(--green);  border-color:rgba(34,197,94,0.4); }
-.apsel.ap-rejected { color:var(--text3);  border-color:var(--border2); opacity:0.75; }
-.apsel.ap-pending  { color:var(--amber);  border-color:rgba(245,158,11,0.4); }
 
 /* Scrollbar global */
 ::-webkit-scrollbar { width: 6px; }
@@ -1152,11 +1029,8 @@ body.show-advanced .advanced-only { display: block; }
   <span id="user-chip" class="user-chip" hidden><span></span><button onclick="signOut()" title="Sign out">Sign out</button></span>
   <nav id="viewnav">
     <button class="navbtn active" data-view="home" onclick="setView('home')">Home</button>
-    <button class="navbtn" data-view="queue" onclick="setView('queue')">
-      Suggestion Queue <span id="nav-pending" class="navcount">0</span>
-    </button>
     <button class="navbtn" data-view="enriched" onclick="setView('enriched')"
-            title="Every company we have already looked up, whatever the approval state">
+            title="Every company we have already looked up">
       Enriched Records
     </button>
     <button class="navbtn" data-view="spend" onclick="setView('spend')"
@@ -1168,17 +1042,7 @@ body.show-advanced .advanced-only { display: block; }
   <div id="total-badge">DB: <span id="db-count">—</span> companies</div>
 </div>
 
-<!-- Suggestion Queue -->
-<div id="queueView" hidden>
-  <div id="queue-bar">
-    <div class="qstat"><span class="qnum" id="q-pending">0</span> Pending</div>
-    <div class="qstat" style="color:var(--text3)">Decisions live in Enriched Records</div>
-    <div class="spacer"></div>
-    <button class="qbtn ghost" onclick="setView('home')">&larr; Back to Home</button>
-    <button class="qbtn" onclick="setView('enriched')">All enriched records &rarr;</button>
-  </div>
-  <div id="queue-list"></div>
-</div>
+
 
   <!-- Spend: what the paid lookups have cost.
        A separate view rather than a panel on Enriched Records, because the
@@ -1207,6 +1071,7 @@ body.show-advanced .advanced-only { display: block; }
     <div class="sp-card" id="sp-account-card" hidden>
       <h3>OpenRouter account</h3>
       <div class="sp-acct" id="sp-account"></div>
+      <div id="sp-recon"></div>
     </div>
 
     <div class="sp-card">
@@ -1436,7 +1301,7 @@ body.show-advanced .advanced-only { display: block; }
           <div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:4px">
             Applied in the database query.<br>
             &ldquo;Enriched&rdquo; means we have looked this company up before,
-            whether or not it was approved.
+            that has been looked up.
           </div>
           <select class="filter-input" id="f-enriched" onchange="setEnrichedFilter(this.value)">
             <option value="all">All companies</option>
@@ -1535,12 +1400,6 @@ body.show-advanced .advanced-only { display: block; }
         <button class="tb-btn et-quick" onclick="setEnrichedRange('7d')">7 days</button>
         <button class="tb-btn et-quick" onclick="setEnrichedRange('all')" title="Clear the date range">All</button>
         <span class="et-spend" id="et-spend" hidden></span>
-        <select class="et-sel" id="et-approval" onchange="setEnrichedApproval(this.value)" title="Approval state">
-          <option value="any">Any decision</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
         <label class="et-check" title="Hide results that have already gone out in a CSV export. Useful when you export more than once in a day and do not want the same rows twice.">
           <input type="checkbox" id="et-unexported" onchange="setEnrichedExported(this.checked)">
           Not yet exported
@@ -1589,7 +1448,6 @@ body.show-advanced .advanced-only { display: block; }
             <!-- The queue drops a card the moment it is decided, so this is
                  where a decision gets changed afterwards. Without it a
                  misclick in the queue would be unrecoverable. -->
-            <th title="Approve or reject an enrichment result. Changes here are saved immediately.">Approval</th>
           </tr>
         </thead>
         <tbody id="table-body"></tbody>
@@ -1802,9 +1660,6 @@ async function tbQuery(params, select, page = 1, retryCount = 0) {
   // alongside the enrichment join, which enriched_filter already forces.
   if (typeof enrichedFrom !== 'undefined' && enrichedFrom) turso.enriched_from = enrichedFrom;
   if (typeof enrichedTo   !== 'undefined' && enrichedTo)   turso.enriched_to   = exclusiveEnd(enrichedTo);
-  if (typeof enrichedApproval !== 'undefined' && enrichedApproval !== 'any') {
-    turso.approval_filter = enrichedApproval;
-  }
   if (typeof enrichedUnexportedOnly !== 'undefined' && enrichedUnexportedOnly) {
     turso.exported_filter = 'not_exported';
   }
@@ -2107,7 +1962,6 @@ async function init() {
   loadAddressDensity();  // async, runs in background — doesn't block UI
   // Load the review queue in the background so the pending badge is accurate
   // from the moment the app opens, without waiting for the tab to be clicked.
-  loadQueue().then(updateQueueCount);
   loadChangeSummary();   // async, background — the table renders without it
   refreshNavActive();
 }
@@ -2184,7 +2038,7 @@ function renderChangeFilter() {
 }
 
 // ── Enriched Records controls ────────────────────────────────────────────
-// The Suggestion Queue is a decision inbox and empties as it is worked. These
+// These
 // filters are the other half of that split: everything ever enriched lives in
 // the Enriched Records table, found by WHEN rather than by scrolling.
 //
@@ -2192,7 +2046,6 @@ function renderChangeFilter() {
 // and drives the join, so narrowing here is cheap.
 let enrichedFrom = null;        // 'YYYY-MM-DD', inclusive
 let enrichedTo   = null;        // 'YYYY-MM-DD', inclusive (converted below)
-let enrichedApproval = 'any';   // any | pending | approved | rejected
 let enrichedUnexportedOnly = false;
 
 // Today in Singapore, not in the browser's timezone. Someone working at 8am
@@ -2234,10 +2087,6 @@ function applyEnrichedDates() {
   rerunEnrichedQuery();
 }
 
-function setEnrichedApproval(v) {
-  enrichedApproval = ['pending', 'approved', 'rejected'].includes(v) ? v : 'any';
-  rerunEnrichedQuery();
-}
 
 function setEnrichedExported(on) {
   enrichedUnexportedOnly = !!on;
@@ -2339,45 +2188,6 @@ function renderChangeCell(row) {
          `onclick="showChangeDetail('${esc(row.uen)}')" ` +
          `title="${esc(label)} — ${esc(why)}\nClick for the full change list.">` +
          `${esc(label)}</span>`;
-}
-
-// Approval control for the main table. Only shown for companies that have
-// actually been enriched — there is nothing to approve otherwise.
-//
-// This is the undo path for the queue. A card leaves the inbox as soon as it
-// is decided, which is what makes the inbox an inbox; the cost is that
-// changing your mind has to happen somewhere, and this is it.
-function renderApprovalCell(uen, enr) {
-  if (!enr || !enr.persisted && !enr.approval) return '';
-  if (!enr.approval || enr.approval === 'queued') return '';
-
-  const states = [
-    ['pending',  'Pending'],
-    ['approved', 'Approved'],
-    ['rejected', 'Rejected'],
-  ];
-  const opts = states.map(([v, label]) =>
-    `<option value="${v}"${enr.approval === v ? ' selected' : ''}>${label}</option>`).join('');
-
-  return `<select class="apsel ap-${esc(enr.approval)}" onchange="setApprovalFromTable('${esc(uen)}', this.value)"
-                  title="Saved immediately">${opts}</select>`;
-}
-
-// Distinct from setApproval(), which toggles and is wired to the queue's
-// buttons. Here the value is chosen explicitly, so it is set rather than
-// toggled — picking "Approved" on an already-approved row must not silently
-// flip it back to pending.
-function setApprovalFromTable(uen, state) {
-  const e = enrichData[uen];
-  if (!e) return;
-  if (!['pending', 'approved', 'rejected'].includes(state)) return;
-
-  e.approval = state;
-  persistApproval(uen, state);
-  renderTable();
-  // A row moved back to pending belongs in the inbox again, so refresh the
-  // count rather than leaving it stale until the next page load.
-  loadQueue().then(() => { updateQueueCount(); if (currentView === 'queue') renderQueue(); });
 }
 
 // ── Change detail ────────────────────────────────────────────────────────
@@ -3923,7 +3733,6 @@ function renderTable() {
       <td>${renderContactCell(row.uen, enr)}</td>
       <td>${renderEnrichedCell(enr)}</td>
       <td>${renderChangeCell(row)}</td>
-      <td>${renderApprovalCell(row.uen, enr)}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -4264,11 +4073,17 @@ async function loadAccountUsage() {
     const ours = await spendQuery({ mode: 'spend_summary', from: utcMonthStart(), to: null })
       .catch(() => null);
 
-    if (ours && typeof ours.cost_usd === 'number' && typeof j.monthly === 'number') {
+    // Rendered into its own container and REPLACED. insertAdjacentHTML added a
+    // fresh copy on every call, so each click of Today / 7 days / 30 days left
+    // another identical paragraph behind.
+    const recon = document.getElementById('sp-recon');
+    if (recon) recon.innerHTML = '';
+
+    if (recon && ours && typeof ours.cost_usd === 'number' && typeof j.monthly === 'number') {
       const gap = j.monthly - ours.cost_usd;
       const pct = j.monthly > 0 ? (gap / j.monthly) * 100 : 0;
       const close = Math.abs(gap) < 0.01 || Math.abs(pct) < 2;
-      el.insertAdjacentHTML('afterend', `
+      recon.innerHTML = `
         <div class="sp-recon">
           This month: <b>${formatUsd(j.monthly)}</b> billed by OpenRouter,
           <b>${formatUsd(ours.cost_usd)}</b> recorded here across
@@ -4279,7 +4094,7 @@ async function loadAccountUsage() {
                 ? ' is billed but not recorded — most likely lookups cut off by the function timeout before they could report back.'
                 : ' is recorded but not yet billed — usually just OpenRouter settling, which lags slightly.'}`}
           <div class="sp-note">Use the recorded figure to attribute cost; use OpenRouter's for the invoice.</div>
-        </div>`);
+        </div>`;
     }
 
     card.hidden = false;
@@ -4372,9 +4187,6 @@ async function exportCSV() {
     }
     if (typeof enrichedFrom !== 'undefined' && enrichedFrom) turso.enriched_from = enrichedFrom;
     if (typeof enrichedTo   !== 'undefined' && enrichedTo)   turso.enriched_to   = exclusiveEnd(enrichedTo);
-    if (typeof enrichedApproval !== 'undefined' && enrichedApproval !== 'any') {
-      turso.approval_filter = enrichedApproval;
-    }
     if (typeof enrichedUnexportedOnly !== 'undefined' && enrichedUnexportedOnly) {
       turso.exported_filter = 'not_exported';
     }
@@ -4548,7 +4360,6 @@ function downloadCSV(rows, filename) {
 // page refresh and are shared across the team. Three parts:
 //   hydrateEnrichment  — turn joined enr_* columns back into enrichData entries
 //   queueEnrichSave    — buffer writes, flushing in batches
-//   persistApproval    — save an approve/reject decision immediately
 
 // Map a saved DB record (enr_* fields on a joined row) back into the shape the
 // table and queue already expect. Confidence drives the badge exactly as it
@@ -4782,31 +4593,6 @@ window.addEventListener('beforeunload', (e) => {
   e.returnValue = '';
 });
 
-// Persist a single approve/reject. Optimistic: the UI has already updated, so
-// we only need to tell the user if the write did not stick.
-async function persistApproval(uen, state) {
-  try {
-    const r = await fetch('/.netlify/functions/enrich-save', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'approve', records: [{ uen, approval: state }] })
-    });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'approve failed');
-
-    // The write can succeed and still change nothing, when the enrichment it
-    // refers to was never saved (see countAffected in enrich-save.js). Saying
-    // "saved" here would be a lie the reviewer only discovers after a refresh,
-    // when both the decision and the result are gone.
-    if (j.missing > 0) {
-      throw new Error('this result is not in the database yet');
-    }
-  } catch (e) {
-    console.warn('Approval not saved:', e.message);
-    showToast(`Could not save approval — ${e.message}`);
-  }
-}
-
 // ══════════════════════════════════════════════════════════════
 // ENRICHMENT MODE + KEYS
 // ══════════════════════════════════════════════════════════════
@@ -4938,7 +4724,7 @@ async function startEnrich() {
       `Enrich ${selRows.length.toLocaleString()} companies?\n\n` +
       `This runs one lookup per company and takes roughly ` +
       `${asTime(lowMin)} to ${asTime(highMin)}.${cost}\n\n` +
-      `You can leave this page — progress shows in the Suggestion Queue.`
+      `Keep this tab open and visible while it runs.`
     );
     if (!ok) return;
   }
@@ -4966,9 +4752,7 @@ async function startEnrich() {
       enrichData[row.uen] = { approval: 'queued', badge: null };
     }
   }
-  updateQueueCount();
-  if (currentView === 'queue') renderQueue();
-  showToast(`✓ Successfully added ${selRows.length} ${selRows.length === 1 ? 'company' : 'companies'} to Suggestion Queue`);
+  showToast(`Starting ${selRows.length} ${selRows.length === 1 ? 'lookup' : 'lookups'}`);
 
   const btn = document.getElementById('start-enrich-btn');
   btn.disabled = true;
@@ -5054,8 +4838,6 @@ async function startEnrich() {
           `filter to "Not enriched yet" so you don't pay twice.</span>`;
         btn.disabled = false;
         btn.textContent = '▶ Start';
-        updateQueueCount();
-        if (currentView === 'queue') renderQueue();
         renderTable();
         return;
       }
@@ -5074,7 +4856,6 @@ async function startEnrich() {
   // so the newly enriched companies appear for review.
   await flushEnrichSaves();
   await flushUsage();
-  await loadQueue();
 
   // Report what happened, not how many rows were attempted. Failures and
   // unsaved results are named explicitly — silence about them is what let a
@@ -5096,8 +4877,6 @@ async function startEnrich() {
   }
 
   // Covers every engine, not just Gemini.
-  updateQueueCount();
-  if (currentView === 'queue') renderQueue();
   btn.disabled = false;
   btn.textContent = '▶ Start';
   renderTable();
@@ -5111,7 +4890,7 @@ async function startEnrich() {
 // minute. We pace AI calls at 6.5 seconds apart (see sleep() in startEnrich)
 // and additionally retry once on 429 with a short backoff.
 // ──────────────────────────────────────────────────────────────────────────
-// Suggestion Queue
+// Enrichment results
 // ──────────────────────────────────────────────────────────────────────────
 // Home is for finding companies. The queue is for deciding about them — a
 // different task needing different information, so it gets its own view.
@@ -5126,12 +4905,11 @@ function setView(v) {
   // narrowing a search is the kind of bug nobody reports because it looks
   // like the data is simply missing.
   if (v !== 'enriched' && typeof enrichedFrom !== 'undefined' &&
-      (enrichedFrom || enrichedTo || enrichedApproval !== 'any' || enrichedUnexportedOnly)) {
+      (enrichedFrom || enrichedTo || enrichedUnexportedOnly)) {
     enrichedFrom = null; enrichedTo = null;
-    enrichedApproval = 'any'; enrichedUnexportedOnly = false;
+    enrichedUnexportedOnly = false;
     const f = document.getElementById('et-from'); if (f) f.value = '';
     const t = document.getElementById('et-to');   if (t) t.value = '';
-    const a = document.getElementById('et-approval'); if (a) a.value = 'any';
     const x = document.getElementById('et-unexported'); if (x) x.checked = false;
   }
 
@@ -5170,7 +4948,6 @@ function setView(v) {
 
   currentView = v;
   document.getElementById('layout').hidden = (v !== 'home');
-  document.getElementById('queueView').hidden = (v !== 'queue');
   const sv = document.getElementById('spendView');
   if (sv) sv.hidden = (v !== 'spend');
   refreshNavActive();
@@ -5187,13 +4964,6 @@ function setView(v) {
   }
 
   if (v === 'spend') loadSpendView();
-
-  if (v === 'queue') {
-    // Refresh from the database each time the tab opens, so a teammate's
-    // decisions and any enrichment done elsewhere are reflected.
-    renderQueue();
-    loadQueue().then(() => { renderQueue(); updateQueueCount(); });
-  }
 }
 
 // Which nav button lights up. Deliberately derived from state rather than
@@ -5202,8 +4972,7 @@ function setView(v) {
 // switches that sidebar select back to "All companies", the tab de-highlights
 // on its own and there is no stale-highlight bug to chase.
 function refreshNavActive() {
-  const active = currentView === 'queue' ? 'queue'
-    : currentView === 'spend' ? 'spend'
+  const active = currentView === 'spend' ? 'spend'
     : (enrichedFilterMode === 'enriched' && changeFilterMode === 'any'
         ? 'enriched' : 'home');
   document.querySelectorAll('.navbtn').forEach(b =>
@@ -5223,7 +4992,6 @@ function refreshNavActive() {
 async function showEnrichedRecords() {
   currentView = 'home';
   document.getElementById('layout').hidden = false;
-  document.getElementById('queueView').hidden = true;
 
   // Clear every other filter so this is a clean "show me everything enriched".
   clearAllFilters({ silent: true });
@@ -5270,87 +5038,7 @@ async function showEnrichedRecords() {
 // own query against the enrichments table, so it shows every record awaiting
 // review — across sessions, and across the whole team.
 
-let queueData = [];          // company rows (with enr_* fields) for the queue
 let queueLoading = false;
-const QUEUE_LIMIT = 500;     // safety cap; see note in loadQueue()
-
-async function loadQueue() {
-  if (queueLoading) return;
-  queueLoading = true;
-  try {
-    const r = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fields: DEFAULT_FIELDS,
-        include_enrichment: true,
-        // Every enriched record, not just pending ones — the queue header shows
-        // approved/rejected counts too, and Salwa can click an approved card to
-        // undo it. Capped because this is a review list, not a browse view.
-        // Decision-only queue: ask the database for work still awaiting a
-        // decision rather than pulling every enriched record and filtering in
-        // the browser. Approved and rejected records live in Enriched
-        // Records, which is a table view built for browsing rather than a
-        // list that grows forever.
-        approval_filter: 'pending',
-        // Newest first, not alphabetical. This is not cosmetic: the queue is
-        // capped at QUEUE_LIMIT rows, so the sort decides WHICH rows come
-        // back. Ordering by company name returned the alphabetically-first
-        // 500 and quietly hid the newest work once the table outgrew the cap
-        // — which is exactly the "I can't tell new from old" problem Daphne
-        // hit. Sorting in the browser cannot fix it, because by then the
-        // wrong rows have already been chosen.
-        sort: [{ field: 'enr_enriched_at', dir: 'desc' }],
-        limit: QUEUE_LIMIT,
-        offset: 0,
-        include_count: true
-      })
-    });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'queue load failed');
-
-    queueData = j.rows || [];
-    // Hydrating here means approve/reject reads the same enrichData the rest
-    // of the app uses, so a decision made in the queue shows on Home too.
-    hydrateFromRows(queueData);
-
-    if (typeof j.total === 'number' && j.total > QUEUE_LIMIT) {
-      console.warn(`Queue shows ${QUEUE_LIMIT} of ${j.total} enriched records.`);
-    }
-  } catch (e) {
-    console.warn('Could not load review queue:', e.message);
-    showToast('Could not load the review queue');
-  } finally {
-    queueLoading = false;
-  }
-}
-
-// The queue is a decision inbox: pending work only.
-//
-// queueData already contains just the pending records (the server filters
-// them), so this mainly merges in rows that are mid-run. During an enrichment
-// pass a company is marked 'queued' locally before any result exists, and
-// those have no database row to have been filtered — without this they would
-// vanish from the queue while being worked on.
-function queueRows() {
-  const seen = new Set();
-  const out = [];
-
-  for (const r of queueData) {
-    const e = enrichData[r.uen];
-    if (!e || !['pending', 'queued'].includes(e.approval)) continue;
-    seen.add(r.uen);
-    out.push(r);
-  }
-
-  for (const r of (allResults || [])) {
-    if (seen.has(r.uen)) continue;
-    const e = enrichData[r.uen];
-    if (e && ['pending', 'queued'].includes(e.approval)) out.push(r);
-  }
-
-  return out;
-}
 
 // Dates in Singapore time, matching the Enriched column on Home. A queue card
 // without a date was the other half of "I can't tell which is new".
@@ -5364,139 +5052,8 @@ function qWhen(iso) {
   });
 }
 
-function updateQueueCount() {
-  const pending = queueRows().filter(r =>
-    ['pending', 'queued'].includes(enrichData[r.uen].approval)).length;
-  const el = document.getElementById('nav-pending');
-  if (!el) return;
-  el.textContent = pending;
-  el.classList.toggle('zero', pending === 0);
-}
 
-function setApproval(uen, state) {
-  const e = enrichData[uen];
-  if (!e) return;
-  e.approval = (e.approval === state) ? 'pending' : state;   // click again to undo
 
-  // Decided work leaves the inbox straight away — that is the point of
-  // splitting the queue from the records. Dropping it from queueData rather
-  // than re-querying keeps the click instant. Changing a decision afterwards
-  // happens in Enriched Records, which has an Approval column for exactly
-  // that; nothing is lost, it just is not undoable from here.
-  if (e.approval === 'approved' || e.approval === 'rejected') {
-    queueData = queueData.filter(r => r.uen !== uen);
-  }
-  // Persist the decision. Optimistic — the UI updates immediately and we only
-  // surface a message if the write fails.
-  persistApproval(uen, e.approval);
-  renderQueue();
-  updateQueueCount();
-  if (typeof renderTable === 'function' && currentView === 'home') renderTable();
-}
-
-function confChip(level) {
-  const l = level || 'NONE';
-  return `<span class="qconf ${esc(l)}">${esc(l)}</span>`;
-}
-
-// Show a value with the page it was read from. No source URL = not a fact.
-function qFieldHtml(label, value, conf, sourceUrl, why) {
-  const src = safeUrl(sourceUrl);
-  const val = value
-    ? `<span class="qplain">${esc(value)}</span>`
-    : `<span class="qnone">not found</span>`;
-  return `
-    <div class="qfield">
-      <div class="qlabel">${esc(label)}</div>
-      <div class="qval">
-        ${val}
-        ${why ? `<div class="qwhy">${esc(why)}</div>` : ''}
-        ${(value && src) ? `<div class="qsrc">read from <a href="${esc(src)}" target="_blank" rel="noopener noreferrer">${esc(src)}</a></div>` : ''}
-      </div>
-      ${value ? confChip(conf) : ''}
-    </div>`;
-}
-
-function renderQueue() {
-  const list = document.getElementById('queue-list');
-  const rows = queueRows();
-
-  // The queue is pending-only now, so its count is simply what is in it.
-  // Approved and rejected totals moved to Enriched Records, where the records
-  // themselves live — a decision inbox that reports how much you have already
-  // decided is telling you about the wrong thing.
-  const pending = rows.length;
-  document.getElementById('q-pending').textContent = pending;
-
-  if (!rows.length) {
-    list.innerHTML = `<div class="qempty">All caught up &mdash; nothing waiting for a decision.<br>
-      Approved and rejected results are in <strong>Enriched Records</strong>.</div>`;
-    return;
-  }
-
-  const cards = rows.map(row => {
-    const e = enrichData[row.uen];
-
-    // Still waiting its turn — show it, but there is nothing to decide yet.
-    if (e.approval === 'queued') {
-      return `
-        <div class="qcard nosuggest">
-          <div class="qcard-head">
-            <span class="qstatus pending">QUEUED</span>
-            <div class="qname">${esc(row.entity_name)}</div>
-            <div class="qmeta">${esc(row.uen)} &middot; waiting for enrichment&hellip;</div>
-          </div>
-        </div>`;
-    }
-
-    const site = safeUrl(e.website);
-    const hasSuggestion = !!(e.website || e.email || e.phone);
-    const dens = densityTier(row);
-    const addrWarn = dens.count >= 30
-      ? `<div class="qwarn">⚠ ${dens.count} companies share this unit — virtual office, address proves nothing</div>` : '';
-
-    const websiteRow = `
-      <div class="qfield">
-        <div class="qlabel">WEBSITE</div>
-        <div class="qval">
-          ${site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(site)}</a>`
-                 : `<span class="qnone">No website found</span>`}
-          ${e.identity_reason ? `<div class="qwhy">${esc(e.identity_reason)}</div>` : ''}
-        </div>
-        ${site ? confChip(e.identity_confidence) : ''}
-      </div>`;
-
-    return `
-      <div class="qcard ${e.approval}${hasSuggestion ? '' : ' nosuggest'}">
-        <div class="qcard-head">
-          <span class="qstatus ${e.approval}">${esc(e.approval.toUpperCase())}</span>
-          <div class="qname">${esc(row.entity_name)}</div>
-          <div class="qmeta">
-            ${esc(row.uen)} &middot; ${esc(row.entity_type_description || '')}
-            ${row.primary_ssic_code ? ' &middot; SSIC ' + esc(row.primary_ssic_code) : ''}<br>
-            ${esc(row.full_address || '')}<br>
-            <span class="qwhen">Enriched ${esc(qWhen(e.enriched_at)) || 'date unknown'}</span>
-            ${e.exported_at
-              ? `<span class="qexported" title="Already included in a CSV export on ${esc(qWhen(e.exported_at))}. It will not appear in the next export unless you tick &ldquo;Include already exported&rdquo;.">Exported ${esc(qWhen(e.exported_at))}</span>`
-              : ''}
-          </div>
-          ${addrWarn}
-        </div>
-        ${websiteRow}
-        ${qFieldHtml('EMAIL', e.email, e.contact_confidence, e.email_source_url || e.contact_source_url, '')}
-        ${qFieldHtml('PHONE', e.phone, e.contact_confidence, e.phone_source_url || e.contact_source_url, '')}
-        ${hasSuggestion ? `
-        <div class="qactions">
-          <button class="qact reject ${e.approval === 'rejected' ? 'on-reject' : ''}"
-                  onclick="setApproval('${esc(row.uen)}','rejected')">✕ Reject</button>
-          <button class="qact approve ${e.approval === 'approved' ? 'on-approve' : ''}"
-                  onclick="setApproval('${esc(row.uen)}','approved')">✓ Approve</button>
-        </div>` : `<div class="qactions"><span class="qnone">Nothing to review</span></div>`}
-      </div>`;
-  }).join('');
-
-  list.innerHTML = cards;
-}
 
 // exportApproved() was removed when the queue became decision-only.
 // Exporting now happens from Enriched Records via the main Export CSV, which
@@ -5521,13 +5078,20 @@ async function markExported(uens) {
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) throw new Error(j.error || `save proxy ${r.status}`);
+
+      // An UPDATE that matched no row is not an error in SQLite, so the write
+      // can "succeed" and stamp nothing — leaving those rows to come back in
+      // the next "not yet exported" export, which is the duplicate-rows
+      // complaint this column exists to fix. Say so rather than report success.
+      if (j.missing > 0) {
+        throw new Error(`${j.missing} row(s) had no saved enrichment to stamp`);
+      }
     }
 
-    // Update in memory too, so the queue reflects it without a reload.
+    // Update in memory too, so the table reflects it without a reload.
     for (const uen of uens) {
       if (enrichData[uen]) enrichData[uen].exported_at = nowIso;
     }
-    renderQueue();
   } catch (e) {
     console.warn('Could not record the export:', e.message);
     showToast('Exported, but could not record it — these rows may appear in the next export');
@@ -5766,9 +5330,6 @@ async function enrichOneAI(row, apiKey, retryCount = 0) {
             : 'none',
   };
 
-  updateQueueCount();
-  if (currentView === 'queue') renderQueue();
-
   // Live-update panel row
   const er = document.getElementById(`er-${row.uen}`);
   if (er) {
@@ -5876,7 +5437,8 @@ async function enrichOneClaude(row, apiKey, retryCount = 0) {
 //     lives server-side in the OPENROUTER_API_KEY env var.
 //  2. The response carries model_used, since OpenRouter may fall back to a
 //     different model than requested; useful when comparing result quality.
-// Results are marked approval:'pending' so they flow into the Suggestion Queue
+// approval is still written to the database (the column and the team's old
+// decisions remain) but nothing reads it since the review step was dropped
 // exactly like the other AI engines.
 async function enrichOneOpenRouter(row, retryCount = 0) {
   const r = await fetch('/.netlify/functions/openrouter-enrich', {
