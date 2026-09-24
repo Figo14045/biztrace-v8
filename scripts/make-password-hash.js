@@ -73,8 +73,45 @@ function askHidden(prompt) {
   });
 }
 
+// Check a password against a hash you already have, without touching Netlify.
+// This is the fastest way to tell "the hash is wrong" from "the server isn't
+// serving the hash you think it is" — two failures that look identical from
+// the sign-in screen.
+async function checkMode() {
+  const { verifyPassword } = require(path.join(__dirname, '..', 'netlify', 'functions', 'lib', 'auth.js'));
+  console.log('\nPaste the hash exactly as it appears in Netlify, then press Enter.');
+  const stored = await askVisible('Hash: ');
+  const pw = await askHidden('Password (hidden): ');
+
+  const trimmed = stored.trim();
+  if (trimmed !== stored) {
+    console.log('\nNote: what you pasted had whitespace around it. The server trims');
+    console.log('this, so it is no longer fatal — but check Netlify for a stray newline.');
+  }
+  if (!/^scrypt\$[0-9a-f]{32}\$[0-9a-f]{64}$/.test(trimmed)) {
+    console.log('\nThat does not look like a complete hash. It should be exactly');
+    console.log('  scrypt$<32 hex chars>$<64 hex chars>');
+    console.log(`You pasted ${trimmed.length} characters; a full hash is 104.`);
+    console.log('A partial copy is the most common cause of this.\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(verifyPassword(pw, trimmed)
+    ? '\n  MATCH — this password works with this hash.\n  If sign-in still fails, Netlify is serving a different value, or the\n  deploy that picked it up has not finished.\n'
+    : '\n  NO MATCH — this password does not produce this hash.\n  Generate a new hash for the password you actually want and replace the\n  Netlify value.\n');
+}
+
+function askVisible(prompt) {
+  return new Promise(resolve => {
+    const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, a => { rl.close(); resolve(a); });
+  });
+}
+
 async function main() {
   if (process.argv[2] === '--secret') { printSecret(); return; }
+  if (process.argv[2] === '--check')  { await checkMode(); return; }
 
   if (process.argv[2]) {
     console.error(`

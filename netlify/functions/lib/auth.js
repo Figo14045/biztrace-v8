@@ -24,9 +24,14 @@
 
 const crypto = require('crypto');
 
-const SESSION_SECRET      = process.env.SESSION_SECRET || '';
-const STAFF_PASSWORD_HASH = process.env.STAFF_PASSWORD_HASH || '';
-const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || '';
+// Trimmed, because these are pasted by hand into a web form. A trailing
+// newline or space is invisible there and makes the comparison fail with
+// "Incorrect password" — which sends you looking at the password, the one
+// place the fault is not. None of these values can legitimately contain
+// leading or trailing whitespace, so trimming can only help.
+const SESSION_SECRET      = (process.env.SESSION_SECRET || '').trim();
+const STAFF_PASSWORD_HASH = (process.env.STAFF_PASSWORD_HASH || '').trim();
+const ADMIN_PASSWORD_HASH = (process.env.ADMIN_PASSWORD_HASH || '').trim();
 
 // 30 days. Long because this is a daily-use internal tool and an enrichment
 // run can last hours — an expiry mid-run would be a bug, not security.
@@ -50,7 +55,8 @@ function hashPassword(password, saltHex) {
 
 function verifyPassword(password, stored) {
   if (!stored) return false;
-  const parts = String(stored).split('$');
+  stored = String(stored).trim();
+  const parts = stored.split('$');
   if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
   let candidate;
   try { candidate = hashPassword(password, parts[1]); }

@@ -45,6 +45,16 @@ console.log('\nPasswords');
   check('a missing hash rejects rather than accepts', !auth.verifyPassword('anything', ''));
   check('a malformed hash rejects', !auth.verifyPassword('x', 'notascrypthash'));
   check('the plaintext is nowhere in the hash', !h.includes('a-long-enough-password'));
+
+  // Pasted into a web form by hand, these values pick up invisible whitespace.
+  // An exact comparison then fails as "Incorrect password", pointing the user
+  // at the one thing that is not wrong.
+  check('a hash with a trailing newline still verifies', auth.verifyPassword('a-long-enough-password', h + '\n'));
+  check('a hash with surrounding spaces still verifies', auth.verifyPassword('a-long-enough-password', `  ${h}  `));
+  check('trimming does not make a wrong password work',
+        !auth.verifyPassword('not-the-password', h + '\n'));
+  check('a truncated hash is still rejected', !auth.verifyPassword('a-long-enough-password', h.slice(0, -4)));
+  check('a full hash is 104 characters (so a short paste is visible)', h.length === 104, String(h.length));
 }
 
 // ── Session tokens ───────────────────────────────────────────────────────
