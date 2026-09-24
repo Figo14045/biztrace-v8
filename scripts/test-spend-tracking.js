@@ -259,6 +259,15 @@ console.log('\nOpenRouter account panel');
   check('an uncapped key reads "No cap", not $0.00',
         /No cap/.test(fn) && /j\.remaining == null/.test(fn),
         'unlimited and empty would look the same');
+  check('the lifetime total is shown',
+        /Total to date/.test(fn) && /formatUsd\(j\.usage\)/.test(fn),
+        'the all-time figure from OpenRouter is fetched but not displayed');
+  check('it is labelled as key-scoped, not account-scoped',
+        /All time on this key/.test(fn));
+  check('the endpoint actually returns it',
+        /usage:\s*num\(d\.usage\)/.test(
+          fs.readFileSync(path.join(ROOT, 'netlify/functions/openrouter-usage.js'), 'utf8')));
+
   check('a low balance is called out',
         /j\.remaining < 5/.test(fn) && /sp-low/.test(fn));
   check('both figures are shown, not one replacing the other',
