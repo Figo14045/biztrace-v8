@@ -168,6 +168,26 @@ async function callFn(file, event) {
 
     r = await login({ httpMethod: 'GET', headers: {} });
     check('a signed-out browser is told so', r.statusCode === 401);
+    check('...and it is reported as signed-out, not as misconfigured',
+          JSON.parse(r.body).code === 'unauthenticated', r.body);
+
+    // The session check must distinguish "no passwords on the server" from
+    // "please sign in". They look the same in the browser and mean opposite
+    // things — one the user can fix by typing, the other they cannot.
+    {
+      const savedStaff = process.env.STAFF_PASSWORD_HASH;
+      const savedAdmin = process.env.ADMIN_PASSWORD_HASH;
+      delete process.env.STAFF_PASSWORD_HASH;
+      delete process.env.ADMIN_PASSWORD_HASH;
+      const res = await login({ httpMethod: 'GET', headers: {} });
+      const j = JSON.parse(res.body);
+      check('a server with no passwords says so on the session check',
+            j.code === 'auth_not_configured', res.body);
+      check('...and names which variables are missing, so it is fixable',
+            j.staff_hash_set === false && j.session_secret_set === true, res.body);
+      process.env.STAFF_PASSWORD_HASH = savedStaff;
+      process.env.ADMIN_PASSWORD_HASH = savedAdmin;
+    }
 
     r = await login({ httpMethod: 'GET', headers: { cookie: `bt_session=${auth.signSession('admin')}` } });
     check('a signed-in browser is recognised', r.statusCode === 200 && JSON.parse(r.body).user === 'admin');

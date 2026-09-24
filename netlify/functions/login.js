@@ -32,6 +32,21 @@ exports.handler = async function (event) {
   // Is this browser signed in? Used on page load to decide whether to show
   // the sign-in screen.
   if (event.httpMethod === 'GET') {
+    // Report a server with no passwords set as exactly that, rather than as
+    // "signed out". They look identical from the browser but mean opposite
+    // things: one is fixed by typing a password, the other cannot be fixed by
+    // the person typing at all. Saying "please sign in" to someone facing a
+    // box that can never accept anything wastes their time — which it did.
+    if (!process.env.SESSION_SECRET || (!STAFF_PASSWORD_HASH && !ADMIN_PASSWORD_HASH)) {
+      return { statusCode: 401, headers, body: JSON.stringify({
+        ok: false,
+        code: 'auth_not_configured',
+        session_secret_set: !!process.env.SESSION_SECRET,
+        staff_hash_set: !!STAFF_PASSWORD_HASH,
+        admin_hash_set: !!ADMIN_PASSWORD_HASH,
+      }) };
+    }
+
     const user = auth.verifySession(auth.readCookie(event));
     if (!user) {
       return { statusCode: 401, headers, body: JSON.stringify({ ok: false, code: 'unauthenticated' }) };

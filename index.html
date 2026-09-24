@@ -1984,7 +1984,7 @@ async function doSignIn(ev) {
       // A server that has no passwords configured is a deployment problem, not
       // a wrong password, and saying so saves an hour of confusion.
       const msg = j.code === 'auth_not_configured'
-        ? 'Sign-in is not set up on the server yet — the environment variables are missing.'
+        ? 'Sign-in is not configured on the server. Set SESSION_SECRET and STAFF_PASSWORD_HASH in Netlify, then redeploy.'
         : (j.error || 'Could not sign in');
       document.getElementById('signin-error').textContent = msg;
       return;
@@ -2026,7 +2026,7 @@ async function checkSession() {
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.ok) { currentUser = j.user; refreshUserChip(); return true; }
     showSignIn(j.code === 'auth_not_configured'
-      ? 'Sign-in is not set up on the server yet — the environment variables are missing.'
+      ? 'Sign-in is not configured on the server. Set SESSION_SECRET and STAFF_PASSWORD_HASH in Netlify, then redeploy.'
       : '');
     return false;
   } catch (e) {
@@ -2045,7 +2045,7 @@ function handleAuthFailure(status, json) {
   currentUser = null;
   refreshUserChip();
   showSignIn(json && json.code === 'auth_not_configured'
-    ? 'Sign-in is not set up on the server yet — the environment variables are missing.'
+    ? 'Sign-in is not configured on the server. Set SESSION_SECRET and STAFF_PASSWORD_HASH in Netlify, then redeploy.'
     : 'Your session expired. Please sign in again.');
   return true;
 }
