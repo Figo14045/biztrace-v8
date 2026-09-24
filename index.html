@@ -139,6 +139,29 @@
 .sp-fail { color:var(--red); font-family:var(--mono); font-size:10px; }
 .sp-empty { color:var(--text3); font-size:12px; padding:18px 0; }
 
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── View navigation ──────────────────────────────────────────────────
+   These rules used to sit under a "Suggestion Queue" comment header, which
+   is how they got caught in the range delete when that view was removed.
+   They belong to the nav, not the queue. */
+#viewnav { display:flex; gap:4px; margin-left:18px; }
+.navbtn {
+  background:none; border:1px solid transparent; color:var(--text3);
+  font-family:var(--mono); font-size:11px; letter-spacing:0.06em;
+  padding:5px 12px; border-radius:var(--radius); cursor:pointer;
+}
+.navbtn:hover { color:var(--text2); }
+.navbtn.active { color:var(--text); background:var(--surface2); border-color:var(--border); }
+
 /* ── Header ── */
 #header {
   display: flex;
@@ -994,7 +1017,6 @@ body.show-advanced .advanced-only { display: block; }
 .et-check:hover { color:var(--text2); }
 .et-check input { accent-color:var(--accent); cursor:pointer; margin:0; }
 
-}
 
 /* Scrollbar global */
 ::-webkit-scrollbar { width: 6px; }
