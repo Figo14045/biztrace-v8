@@ -251,5 +251,44 @@ console.log('\nSpend view');
         /not billed in \$/.test(engines));
 }
 
+// ── Billed vs recorded ───────────────────────────────────────────────────
+console.log('\nOpenRouter account panel');
+{
+  const fn = extractFunction(HTML, 'loadAccountUsage');
+
+  check('an uncapped key reads "No cap", not $0.00',
+        /No cap/.test(fn) && /j\.remaining == null/.test(fn),
+        'unlimited and empty would look the same');
+  check('a low balance is called out',
+        /j\.remaining < 5/.test(fn) && /sp-low/.test(fn));
+  check('both figures are shown, not one replacing the other',
+        /billed by OpenRouter/.test(fn) && /recorded here/.test(fn));
+  check('the gap is explained rather than hidden',
+        /function timeout/.test(fn) && /settling/.test(fn));
+  check('the panel failing does not break the Spend view',
+        /card\.hidden = true/.test(fn) && /catch/.test(fn));
+
+  // The comparison window must match how OpenRouter buckets its month, or the
+  // two sides describe different periods for the first hours of each day.
+  const ms = extractFunction(HTML, 'utcMonthStart');
+  check('the month window is UTC, matching OpenRouter',
+        /getUTCFullYear/.test(ms) && /getUTCMonth/.test(ms) && !/Asia\/Singapore/.test(ms));
+
+  const sb4 = { Date, String }; sb4.globalThis = sb4;
+  vm.createContext(sb4); vm.runInContext(ms, sb4);
+  check('it returns the first of a month', /^\d{4}-\d{2}-01$/.test(sb4.utcMonthStart()),
+        sb4.utcMonthStart());
+
+  const SRC = fs.readFileSync(path.join(ROOT, 'netlify/functions/openrouter-usage.js'), 'utf8');
+  check('the endpoint requires a session', /auth\.requireAuth\(event/.test(SRC));
+  check('the API key never reaches the browser',
+        !/OPENROUTER_API_KEY/.test(SRC.split('return {')[1] || ''),
+        'the key must not appear in any response body');
+  check('a slow OpenRouter cannot hold the function open',
+        /AbortController/.test(SRC) && /TIMEOUT_MS/.test(SRC));
+  check('an OpenRouter failure returns ok:false rather than a 500',
+        /statusCode: 200[\s\S]{0,120}ok: false/.test(SRC));
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exitCode = failures ? 1 : 0;

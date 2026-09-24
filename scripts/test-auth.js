@@ -108,7 +108,10 @@ console.log('\nCookies');
 console.log('\nThe gate');
 
 const PROTECTED = ['query.js', 'enrich-save.js', 'openrouter-enrich.js',
-                   'ai-enrich.js', 'claude-enrich.js', 'serp.js', 'fetch-contact.js'];
+                   'ai-enrich.js', 'claude-enrich.js', 'serp.js', 'fetch-contact.js',
+                   // Reports account spend, so it must be behind the gate too —
+                   // it would otherwise tell anyone what the company is spending.
+                   'openrouter-usage.js'];
 
 async function callFn(file, event) {
   delete require.cache[require.resolve(path.join(FUNCS, file))];

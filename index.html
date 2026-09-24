@@ -115,6 +115,18 @@
 .sp-grid { stroke:var(--border); stroke-width:1; }
 .sp-axis { fill:var(--text3); font-family:var(--mono); font-size:9px; }
 
+.sp-acct { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:14px; }
+.sp-acct div span { display:block; font-family:var(--mono); font-size:10px; letter-spacing:0.08em;
+                    text-transform:uppercase; color:var(--text3); margin-bottom:4px; }
+.sp-acct div b { font-family:var(--mono); font-size:16px; font-weight:500;
+                 font-variant-numeric:tabular-nums; color:var(--text); }
+.sp-acct div i { display:block; font-style:normal; font-size:11px; color:var(--text3); margin-top:3px; }
+.sp-recon { margin-top:14px; padding-top:12px; border-top:1px solid var(--border);
+            font-size:12px; color:var(--text2); line-height:1.5; }
+.sp-recon b { color:var(--text); }
+.sp-low { color:var(--amber); }
+.sp-note { color:var(--text3); font-size:11px; margin-top:6px; line-height:1.5; }
+
 .sp-table { width:100%; border-collapse:collapse; font-size:12px; }
 .sp-table th { text-align:left; font-family:var(--mono); font-size:10px; letter-spacing:0.06em;
                text-transform:uppercase; color:var(--text3); font-weight:500;
@@ -1191,6 +1203,11 @@ body.show-advanced .advanced-only { display: block; }
     </div>
 
     <div class="sp-tiles" id="sp-tiles"></div>
+
+    <div class="sp-card" id="sp-account-card" hidden>
+      <h3>OpenRouter account</h3>
+      <div class="sp-acct" id="sp-account"></div>
+    </div>
 
     <div class="sp-card">
       <h3>Cost per day</h3>
@@ -4072,6 +4089,7 @@ async function loadSpendView() {
       spendQuery({ ...body, mode: 'spend_daily' }),
     ]);
     renderSpendTiles(summary);
+    loadAccountUsage();          // independent of the range — never blocks it
     renderSpendChart(daily.days || []);
     renderSpendEngines(summary.by_engine || []);
     renderSpendRecent(daily.recent || []);
@@ -4200,6 +4218,83 @@ function renderSpendChart(days) {
 
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
        aria-label="Recorded cost per day">${grid}${bars}</svg>`;
+}
+
+// What OpenRouter says it has billed, alongside what we recorded.
+//
+// The two answer different questions and neither replaces the other:
+//   recorded — every call that came back to us, attributable to a company and
+//              a day. This is the number for ROI.
+//   billed   — OpenRouter's own figure. This is the number on the invoice.
+//
+// They differ when a call is charged but never returns — a function timeout,
+// most likely. Showing the difference rather than hiding it means nobody has
+// to wonder which number lied; a persistent gap is itself a finding.
+//
+// Fails quietly: this panel is an addition to the Spend view, not part of it.
+async function loadAccountUsage() {
+  const card = document.getElementById('sp-account-card');
+  const el = document.getElementById('sp-account');
+  if (!card || !el) return;
+
+  try {
+    const r = await fetch('/.netlify/functions/openrouter-usage');
+    const j = await r.json();
+    if (!j.ok) { card.hidden = true; return; }
+
+    const cell = (label, value, note) =>
+      `<div><span>${label}</span><b>${value}</b>${note ? `<i>${note}</i>` : ''}</div>`;
+
+    // A key with no cap reports null rather than a number. "Unlimited" and
+    // "nothing left" must not look the same.
+    const remaining = j.remaining == null
+      ? cell('Credits left', 'No cap', 'This key has no credit limit set')
+      : cell('Credits left', formatUsd(j.remaining),
+             j.remaining < 5 ? '<span class="sp-low">Low — top up before the next batch</span>' : 'On this key');
+
+    el.innerHTML = [
+      cell('Billed today', formatUsd(j.daily), 'UTC day'),
+      cell('This week', formatUsd(j.weekly), 'UTC week'),
+      cell('This month', formatUsd(j.monthly), 'UTC month'),
+      remaining,
+    ].join('');
+
+    // Compare this month's two figures. Month is the right window: it is the
+    // one OpenRouter reports directly, so no arithmetic of ours is involved.
+    const ours = await spendQuery({ mode: 'spend_summary', from: utcMonthStart(), to: null })
+      .catch(() => null);
+
+    if (ours && typeof ours.cost_usd === 'number' && typeof j.monthly === 'number') {
+      const gap = j.monthly - ours.cost_usd;
+      const pct = j.monthly > 0 ? (gap / j.monthly) * 100 : 0;
+      const close = Math.abs(gap) < 0.01 || Math.abs(pct) < 2;
+      el.insertAdjacentHTML('afterend', `
+        <div class="sp-recon">
+          This month: <b>${formatUsd(j.monthly)}</b> billed by OpenRouter,
+          <b>${formatUsd(ours.cost_usd)}</b> recorded here across
+          ${ours.calls.toLocaleString()} lookups.
+          ${close
+            ? 'These agree, so essentially nothing is going unrecorded.'
+            : `A difference of <b>${formatUsd(Math.abs(gap))}</b>${gap > 0
+                ? ' is billed but not recorded — most likely lookups cut off by the function timeout before they could report back.'
+                : ' is recorded but not yet billed — usually just OpenRouter settling, which lags slightly.'}`}
+          <div class="sp-note">Use the recorded figure to attribute cost; use OpenRouter's for the invoice.</div>
+        </div>`);
+    }
+
+    card.hidden = false;
+  } catch (e) {
+    console.warn('OpenRouter account usage unavailable:', e.message);
+    card.hidden = true;
+  }
+}
+
+// First day of the current UTC month, matching how OpenRouter buckets its
+// monthly figure. Using Singapore time here would compare two different months
+// for the first eight hours of every day.
+function utcMonthStart() {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
 function renderSpendEngines(rows) {
